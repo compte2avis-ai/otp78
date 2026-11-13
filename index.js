@@ -6,22 +6,17 @@ const { v4: uuidv4 } = require('uuid');
 const DISCORD_TOKEN    = process.env.DISCORD_TOKEN    || 'TON_TOKEN_ICI';
 const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1570890792745304245';
 
-// IDs DE TES RÔLES
 const ROLE_ACCES_ID    = '1541600868787556412'; 
 const ROLE_CROWN_ID    = '1541601494929907763';
 const ROLE_OWNER_ID    = '1565080966693781644';
 const ROLE_SUPPORT_ID  = '1541600641183387738';
 
-// Variable pour stocker le salon admin
 let currentAdminChannelId = ADMIN_CHANNEL_ID;
-
 const demandes = new Map();
 
 const client = new Client({ intents: [
-  GatewayIntentBits.Guilds,
-  GatewayIntentBits.GuildMessages,
-  GatewayIntentBits.MessageContent,
-  GatewayIntentBits.GuildMembers
+  GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers
 ]});
 
 client.once('ready', () => {
@@ -30,12 +25,12 @@ client.once('ready', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   GESTION DES BOUTONS (Site Web)
+   GESTION DES BOUTONS & MENUS (Site Web & Tickets)
    ═══════════════════════════════════════════════════════════════ */
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
 
-  // GESTION DES TICKETS (Select Menu)
+  // --- SYSTEME DE TICKET (Select Menu) ---
   if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select') {
     const choice = interaction.values[0];
     let categoryName = 'Autre';
@@ -70,13 +65,14 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
+  // --- FERMER UN TICKET ---
   if (interaction.isButton() && interaction.customId === 'close_ticket') {
     await interaction.reply({ content: 'Fermeture du ticket dans 5 secondes...', ephemeral: false });
     setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
     return;
   }
 
-  // BOUTONS DU SITE WEB
+  // --- BOUTONS DU SITE WEB ---
   const args = interaction.customId.split(':');
   const action = args[0];
   const demandeId = args[args.length - 1]; 
@@ -163,7 +159,6 @@ client.on('messageCreate', async (message) => {
   const args = message.content.slice(1).trim().split(/ +/);
   const cmd = args.shift().toLowerCase();
 
-  // --- Commande : !help ---
   if (cmd === 'help') {
     const embed = new EmbedBuilder()
       .setTitle('📖 Commandes du Bot')
@@ -171,135 +166,109 @@ client.on('messageCreate', async (message) => {
       .setDescription('Voici la liste des commandes disponibles (préfixe `!`) :')
       .addFields(
         { name: '🛠️ Modération', value: '`!ban @user`\n`!kick @user`\n`!mute @user [durée]`\n`!lock #salon`' },
-        { name: '⚙️ Administration', value: '`!admin @user`\n`!acces @user [30s/1d/1w/lifetime]`' },
+        { name: '⚙️ Administration', value: '`!admin @user`\n`!acces @user [30s/1j/1semaine/lifetime]`' },
         { name: '🎫 Tickets', value: '`!ticket #salon`' }
-      )
-      .setFooter({ text: 'Snapchat+ | Système de gestion' });
+      ).setFooter({ text: 'Snapchat+ | Système de gestion' });
     return message.reply({ embeds: [embed] });
   }
 
-  // --- Commande : !ticket ---
   if (cmd === 'ticket') {
-    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-      return message.reply({ content: '❌ Tu n\'as pas la permission d\'utiliser cette commande.' });
-    }
+    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply({ content: '❌ Tu n\'as pas la permission.' });
+    
+    // TON LIEN DIRECT ICI
+    const bannerURL = 'https://i.imgur.com/NhoPWn6.png'; 
 
     const embed = new EmbedBuilder()
       .setTitle("Besoin d'aide ?")
       .setDescription("Ouvrez un ticket en sélectionnant une catégorie ci-dessous. Notre équipe vous répondra dans les plus brefs délais.")
       .setColor(0x2b2d31)
-      .setImage('https://i.imgur.com/L7K0wX5.png'); // Optionnel, une bannière
+      .setImage(bannerURL); // La bannière s'affiche ici
 
     const menu = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('ticket_select')
-        .setPlaceholder('Sélectionne une catégorie...')
+      new StringSelectMenuBuilder().setCustomId('ticket_select').setPlaceholder('Sélectionne une catégorie...')
         .addOptions([
-          { label: 'Get-Acces', description: 'Obtenir un accès ou un rôle', value: 'acces', emoji: '🔑' },
-          { label: 'Redeem', description: 'Racheter ou renouveler un accès', value: 'redeem', emoji: '💎' },
-          { label: 'Autre', description: 'Une autre demande', value: 'autre', emoji: '❓' }
+          { label: 'Get-Acces', description: 'Obtenir un accès', value: 'acces', emoji: '🔑' },
+          { label: 'Redeem', description: 'Racheter un accès', value: 'redeem', emoji: '💎' },
+          { label: 'Autre', description: 'Autre demande', value: 'autre', emoji: '❓' }
         ])
     );
-
     return message.channel.send({ embeds: [embed], components: [menu] });
   }
 
-  // --- Commandes d'administration (vérification) ---
   if (['ban','kick','mute','acces','admin','lock'].includes(cmd)) {
-    // Vérification des permissions admin (ou rôle spécifique)
     if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator) && !message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-      return message.reply({ content: '❌ Tu n\'as pas les permissions requises pour cette commande.' });
+      return message.reply({ content: '❌ Tu n\'as pas les permissions requises.' });
     }
 
-    // --- Commande : !lock ---
     if (cmd === 'lock') {
       const channel = message.mentions.channels.first();
       if (!channel) return message.reply('❌ Mentionne un salon. Ex: `!lock #general`');
-      
-      try {
-        await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-        return message.reply(`🔒 Le salon ${channel} a été verrouillé.`);
-      } catch (e) { return message.reply('❌ Je n\'ai pas la permission de verrouiller ce salon.'); }
+      try { await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false }); return message.reply(`🔒 Salon ${channel} verrouillé.`); } 
+      catch (e) { return message.reply('❌ Permission refusée.'); }
     }
 
-    // --- Commandes nécessitant un utilisateur cible ---
     const target = message.mentions.members.first();
     if (!target) return message.reply('❌ Mentionne un utilisateur. Ex: `!' + cmd + ' @user`');
     if (target.roles.highest.position >= message.member.roles.highest.position && message.author.id !== message.guild.ownerId) {
-      return message.reply('❌ Tu ne peux pas sanctionner quelqu\'un de plus haut gradé que toi.');
+      return message.reply('❌ Tu ne peux pas sanctionner quelqu\'un de plus haut gradé.');
     }
 
-    // --- Commande : !ban ---
     if (cmd === 'ban') {
-      if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('❌ Tu n\'as pas la permission de bannir.');
-      try {
-        await target.ban({ reason: 'Banni par ' + message.author.tag });
-        return message.reply(`🔨 **${target.user.tag}** a été banni.`);
-      } catch (e) { return message.reply('❌ Impossible de bannir cet utilisateur.'); }
+      if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('❌ Permission de ban manquante.');
+      try { await target.ban({ reason: 'Par ' + message.author.tag }); return message.reply(`🔨 **${target.user.tag}** banni.`); } catch (e) { return message.reply('❌ Impossible de bannir.'); }
     }
-
-    // --- Commande : !kick ---
     if (cmd === 'kick') {
-      if (!message.member.permissions.has(PermissionsBitField.Flags.KickMembers)) return message.reply('❌ Tu n\'as pas la permission d\'expulser.');
-      try {
-        await target.kick('Expulsé par ' + message.author.tag);
-        return message.reply(`👢 **${target.user.tag}** a été expulsé.`);
-      } catch (e) { return message.reply('❌ Impossible d\'expulser cet utilisateur.'); }
+      if (!message.member.permissions.has(PermissionsBitField.Flags.KickMembers)) return message.reply('❌ Permission d\'expulser manquante.');
+      try { await target.kick('Par ' + message.author.tag); return message.reply(`👢 **${target.user.tag}** expulsé.`); } catch (e) { return message.reply('❌ Impossible d\'expulser.'); }
     }
-
-    // --- Commande : !mute ---
     if (cmd === 'mute') {
       const timeArg = args[1] || '10m';
       const match = timeArg.match(/^(\d+)(s|m|h|d)$/);
-      let ms = 10 * 60 * 1000; // 10 mins par défaut
-      if (match) {
-        const val = parseInt(match[1]);
-        const unit = match[2];
-        const mult = unit === 's' ? 1000 : unit === 'm' ? 60000 : unit === 'h' ? 3600000 : 86400000;
-        ms = val * mult;
-      }
-      try {
-        await target.timeout(ms, 'Mute par ' + message.author.tag);
-        return message.reply(`🔇 **${target.user.tag}** est muet pour ${timeArg}.`);
-      } catch (e) { return message.reply('❌ Impossible de mute.'); }
+      let ms = 10 * 60 * 1000; 
+      if (match) { const mult = match[2] === 's' ? 1000 : match[2] === 'm' ? 60000 : match[2] === 'h' ? 3600000 : 86400000; ms = parseInt(match[1]) * mult; }
+      try { await target.timeout(ms, 'Par ' + message.author.tag); return message.reply(`🔇 **${target.user.tag}** muet pour ${timeArg}.`); } catch (e) { return message.reply('❌ Impossible de mute.'); }
     }
-
-    // --- Commande : !admin (Créer un salon admin privé) ---
     if (cmd === 'admin') {
       try {
         const adminChan = await message.guild.channels.create({
-          name: `admin-${target.user.username}`,
-          type: ChannelType.GuildText,
+          name: `admin-${target.user.username}`, type: ChannelType.GuildText,
           permissionOverwrites: [
             { id: message.guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
             { id: target.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
             { id: message.author.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
           ]
         });
-        currentAdminChannelId = adminChan.id; // Met à jour le salon des demandes
-        return message.reply(`⚙️ Salon admin créé : ${adminChan}\nLes demandes du site arriveront maintenant ici.`);
-      } catch (e) { return message.reply('❌ Impossible de créer le salon admin.'); }
+        currentAdminChannelId = adminChan.id;
+        return message.reply(`⚙️ Salon admin créé : ${adminChan}\nLes demandes du site arriveront ici.`);
+      } catch (e) { return message.reply('❌ Impossible de créer le salon.'); }
     }
 
-    // --- Commande : !acces (Donner un rôle temporaire) ---
     if (cmd === 'acces') {
-      const timeArg = args[1] ? args[1].toLowerCase() : 'lifetime';
+      const timeArg = args[1] ? args[1].toLowerCase() : null;
       const role = message.guild.roles.cache.get(ROLE_ACCES_ID);
-      
       if (!role) return message.reply('❌ Rôle d\'accès introuvable.');
-      
+
+      if (!timeArg) {
+        return message.reply('❌ Précise une durée. Ex: `!acces @user 30s` ou `!acces @user 1j` ou `!acces @user lifetime`');
+      }
+
+      let ms = 0;
+      let displayTime = timeArg;
+
+      if (timeArg === '30s' || timeArg === '30second' || timeArg === '30secondes') { ms = 30 * 1000; displayTime = '30 secondes'; }
+      else if (timeArg === '1j' || timeArg === '1d' || timeArg === '1jour') { ms = 24 * 60 * 60 * 1000; displayTime = '1 jour'; }
+      else if (timeArg === '1w' || timeArg === '1semaine' || timeArg === '1sem') { ms = 7 * 24 * 60 * 60 * 1000; displayTime = '1 semaine'; }
+      else if (timeArg === 'lifetime' || timeArg === 'vie') { ms = 0; displayTime = 'Lifetime'; }
+      else {
+        return message.reply('❌ Temps invalide. Utilise : `30s`, `1j`, `1semaine` ou `lifetime`.');
+      }
+
       try {
         await target.roles.add(role);
         
-        let ms = 0;
-        if (timeArg === '30s') ms = 30 * 1000;
-        else if (timeArg === '1d') ms = 24 * 60 * 60 * 1000;
-        else if (timeArg === '1w') ms = 7 * 24 * 60 * 60 * 1000;
-        
         if (ms > 0) {
-          message.reply(`✅ Accès donné à **${target.user.tag}** pour ${timeArg}.`);
+          message.reply(`✅ Accès de **${displayTime}** donné à **${target.user.tag}**.`);
           
-          // Timer pour retirer le rôle
           setTimeout(async () => {
             try {
               if (target.roles.cache.has(role.id)) {
@@ -316,7 +285,7 @@ client.on('messageCreate', async (message) => {
         } else {
           message.reply(`♾️ Accès **Lifetime** donné à **${target.user.tag}**.`);
         }
-      } catch (e) { return message.reply('❌ Impossible de donner le rôle (vérifie que le rôle du bot est au-dessus).'); }
+      } catch (e) { return message.reply('❌ Impossible de donner le rôle.'); }
     }
   }
 });
