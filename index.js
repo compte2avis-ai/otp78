@@ -21,14 +21,17 @@ client.once('ready', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   GESTION DES BOUTONS
+   GESTION DES BOUTONS (CORRIGÉ)
    ═══════════════════════════════════════════════════════════════ */
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
 
+  // On sépare l'action et l'ID. Le bouton "setcode" a 3 parties.
   const args = interaction.customId.split(':');
   const action = args[0];
-  const demandeId = args[1];
+  // L'ID de la demande est TOUJOURS le dernier élément (que ce soit pour setcode ou les autres)
+  const demandeId = args[args.length - 1]; 
+  
   const demande = demandes.get(demandeId);
 
   if (!demande) return interaction.reply({ content: 'Ce dossier est terminé ou n\'existe plus.', ephemeral: true });
@@ -91,13 +94,11 @@ client.on('interactionCreate', async (interaction) => {
 
   // ── 3. DEMANDER LE CODE (4 ou 6) ──
   if (action === 'setcode') {
-    const length = parseInt(args[1]);
-    const demId = args[2]; // On récupère l'ID correctement ici
-    const dem = demandes.get(demId);
+    const length = parseInt(args[1]); // args[1] c'est le "4" ou "6"
     
-    dem.codeLength = length;
-    dem.waitingForCode = true;
-    demandes.set(demId, dem);
+    demande.codeLength = length;
+    demande.waitingForCode = true;
+    demandes.set(demandeId, demande);
 
     await interaction.update({
       content: `⏳ **Demande envoyée au client (Code à ${length} chiffres). En attente de sa saisie...**`,
