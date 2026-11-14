@@ -1,18 +1,16 @@
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionsBitField, ChannelType, StringSelectMenuBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionsBitField, ChannelType, StringSelectMenuBuilder, SlashCommandBuilder, REST, Routes } = require('discord.js');
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
 const DISCORD_TOKEN    = process.env.DISCORD_TOKEN    || 'TON_TOKEN_ICI';
+const CLIENT_ID        = process.env.CLIENT_ID        || 'TON_CLIENT_ID_ICI'; // ⚠️ À METTRE DANS RAILWAY
 const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1570890792745304245';
 
-const ROLE_ACCES_ID    = '1541600868787556412'; 
 const ROLE_CROWN_ID    = '1541601494929907763';
 const ROLE_OWNER_ID    = '1565080966693781644';
 const ROLE_SUPPORT_ID  = '1541600641183387738';
 
-// Stockage des admins autorisés (tu es le seul à pouvoir ajouter/retirer)
-const autorizedAdmins = new Set(['1565080966693781644']); // <-- TON ID DISCORD ICI (mets le tien)
 const demandes = new Map();
 
 const client = new Client({ intents: [
@@ -20,18 +18,106 @@ const client = new Client({ intents: [
   GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers
 ]});
 
-client.once('ready', () => {
+/* ═══════════════════════════════════════════════════════════════
+   ENREGISTREMENT DES COMMANDES SLASH (/)
+   ═══════════════════════════════════════════════════════════════ */
+client.once('ready', async () => {
   console.log(`✅ Bot connecté : ${client.user.tag}`);
-  client.user.setActivity('!help | Snapchat+', { type: 'WATCHING' });
+  client.user.setActivity('Snapchat+ | /ticket', { type: 'WATCHING' });
+
+  const commands = [
+    new SlashCommandBuilder()
+      .setName('ticket')
+      .setDescription('Envoyer le panneau de ticket')
+      .addChannelOption(option => 
+        option.setName('salon')
+          .setDescription('Le salon où envoyer le panneau')
+          .setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('list')
+      .setDescription('Afficher la liste de toutes les demandes (codes, blacklist, etc.)')
+  ].map(command => command.toJSON());
+
+  const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
+  try {
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log('✅ Commandes Slash enregistrées !');
+  } catch (error) {
+    console.error(error);
+  }
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   INTERACTIONS (Boutons et Menus)
+   GESTION DES INTERACTIONS
    ═══════════════════════════════════════════════════════════════ */
 client.on('interactionCreate', async (interaction) => {
+  
+  // --- COMMANDES SLASH ---
+  if (interaction.isChatInputCommand()) {
+    
+    // /ticket #salon
+    if (interaction.commandName === 'ticket') {
+      const channel = interaction.options.getChannel('salon');
+      const bannerURL = 'https://i.imgur.com/NhoPWn6.png'; 
+
+      const embed = new EmbedBuilder()
+        .setTitle("🎟️ Besoin d'aide ?")
+        .setDescription("> *Ouvrez un ticket en sélectionnant une catégorie ci-dessous. Notre équipe vous répondra dans les plus brefs délais.*")
+        .setColor(0x2b2d31)
+        .setImage(bannerURL);
+
+      const menu = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId('ticket_select').setPlaceholder('Sélectionne une catégorie...')
+          .addOptions([
+            { label: 'Get-Acces', description: 'Obtenir un accès', value: 'acces', emoji: '🔑' },
+            { label: 'Redeem', description: 'Racheter un accès', value: 'redeem', emoji: '💎' },
+            { label: 'Autre', description: 'Autre demande', value: 'autre', emoji: '❓' }
+          ])
+      );
+      
+      await channel.send({ embeds: [embed], components: [menu] });
+      return interaction.reply({ content: `✅ Panneau de ticket envoyé dans ${channel}.`, ephemeral: true });
+    }
+
+    // /list
+    if (interaction.commandName === 'list') {
+      if (demandes.size === 0) return interaction.reply({ content: "Aucune demande pour le moment.", ephemeral: true });
+
+      const allDemandes = Array.from(demandes.values());
+      
+      const pending = allDemandes.filter(d => d.status === 'pending' || d.waitingForCode);
+      const accepted = allDemandes.filter(d => d.status === 'accepted');
+      const rejected = allDemandes.filter(d => d.status === 'rejected');
+      const blacklisted = allDemandes.filter(d => d.status === 'blacklisted');
+
+      const formatList = (arr, showCode = false) => {
+        if (arr.length === 0) return "`Aucun`";
+        return arr.map(d => {
+          let str = `> 👤 **@${d.username}** | 📱 \`${d.phone}\` | 🏢 \`${d.operator}\``;
+          if (showCode && d.code) str += ` | 🔑 Code: \`${d.code}\``;
+          return str;
+        }).join('\n');
+      };
+
+      const embed = new EmbedBuilder()
+        .setTitle('📂 Base de données des demandes')
+        .setColor(0x2b2d31)
+        .addFields(
+          { name: `⏳ En attente (${pending.length})`, value: formatList(pending), inline: false },
+          { name: `✅ Acceptées (${accepted.length})`, value: formatList(accepted, true), inline: false },
+          { name: `❌ Refusées (${rejected.length})`, value: formatList(rejected), inline: false },
+          { name: `🚫 Blacklist (${blacklisted.length})`, value: formatList(blacklisted), inline: false }
+        )
+        .setFooter({ text: 'Snapchat+ | Historique des codes' })
+        .setTimestamp();
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+  }
+
+  // --- MENUS ET BOUTONS ---
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
 
-  // --- TICKET (Menu déroulant) ---
   if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select') {
     const choice = interaction.values[0];
     let categoryName = 'Autre';
@@ -49,7 +135,7 @@ client.on('interactionCreate', async (interaction) => {
       
       const embed = new EmbedBuilder()
         .setTitle(`🎫 Ticket : ${categoryName}`)
-        .setDescription(`Bonjour ${interaction.user}, un membre du staff va te répondre rapidement.\nExplique ta demande ci-dessous.`)
+        .setDescription(`> Bonjour ${interaction.user}, un membre du staff va te répondre rapidement.\n> Explique ta demande ci-dessous.`)
         .setColor(0x2b2d31);
       const btnClose = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('close_ticket').setLabel('Fermer le ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
@@ -65,23 +151,30 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // --- BOUTONS DU SITE WEB ---
+  // --- BOUTONS DU SITE WEB (Demandes) ---
   const args = interaction.customId.split(':');
   const action = args[0];
   const demandeId = args[args.length - 1]; 
   const demande = demandes.get(demandeId);
 
-  if (!demande) return interaction.reply({ content: 'Ce dossier est terminé.', ephemeral: true });
+  if (!demande) return interaction.reply({ content: 'Ce dossier est terminé ou n\'existe plus.', ephemeral: true });
 
   if (action === 'claim') {
-    if (demande.claimed) return interaction.reply({ content: '❌ Déjà pris !', ephemeral: true });
+    if (demande.claimed) return interaction.reply({ content: '❌ Trop tard, ce numéro a déjà été pris !', ephemeral: true });
 
     demande.claimed = true;
     demande.claimedBy = interaction.user.id;
     demandes.set(demandeId, demande);
 
-    await interaction.update({ content: `⚡ **Numéro pris par ${interaction.user}**`, embeds: [], components: [] });
+    // Modification du message original : suppression du bouton, ajout du texte "Pris par"
+    const embedPris = new EmbedBuilder()
+      .setTitle(`⚡ NOUVEAU NUMÉRO : ${demande.operator}`)
+      .setDescription(`**Pris par ${interaction.user}**`)
+      .setColor(0xFF6B00);
 
+    await interaction.update({ embeds: [embedPris], components: [] });
+
+    // Création du fil privé
     const thread = await interaction.channel.threads.create({
       name: `📁 Dossier - @${demande.username}`,
       type: ChannelType.PrivateThread, reason: 'Prise en charge'
@@ -92,10 +185,11 @@ client.on('interactionCreate', async (interaction) => {
     demandes.set(demandeId, demande);
 
     const dossierEmbed = new EmbedBuilder()
-      .setTitle('📁 FICHE DE VÉRIFICATION').setColor(0xFF6B00)
-      .setDescription(`Nouveau numéro attribué pour **@${demande.username}**.`)
+      .setTitle('📁 FICHE DE VÉRIFICATION')
+      .setColor(0x2b2d31)
+      .setDescription(`> Nouveau numéro attribué pour **@${demande.username}**.`)
       .addFields(
-        { name: '📱 Numéro Cible', value: `**+33 ${demande.phone}**\n\`${demande.phone}\``, inline: false },
+        { name: '📱 Numéro Cible', value: `\`\`\`\n+33 ${demande.phone}\n\`\`\``, inline: false },
         { name: '👤 Snapchat', value: `\`@${demande.username}\``, inline: true },
         { name: '🏢 Opérateur', value: `\`${demande.operator}\``, inline: true }
       );
@@ -118,196 +212,52 @@ client.on('interactionCreate', async (interaction) => {
     demande.codeLength = length;
     demande.waitingForCode = true;
     demandes.set(demandeId, demande);
-    await interaction.update({ content: `⏳ **En attente du code à ${length} chiffres...**`, embeds: [], components: [] });
+    
+    const embedWait = new EmbedBuilder()
+      .setDescription(`⏳ **En attente du code à ${length} chiffres...**`)
+      .setColor(0x2b2d31);
+      
+    await interaction.update({ embeds: [embedWait], components: [] });
   }
 
   if (action === 'badcode') {
     demande.waitingForCode = true;
     demandes.set(demandeId, demande);
-    await interaction.update({ content: `⚠️ **Code invalide. Redemandé.**`, embeds: [], components: [] });
+    
+    const embedBad = new EmbedBuilder()
+      .setDescription(`⚠️ **Code invalide. Le client a été invité à réessayer.**`)
+      .setColor(0xef4444);
+      
+    await interaction.update({ embeds: [embedBad], components: [] });
   }
 
   if (action === 'accept') {
     demande.status = 'accepted';
     demandes.set(demandeId, demande);
-    await interaction.update({ content: `✅ **Validé !**`, embeds: [], components: [] });
+    
+    const embedOk = new EmbedBuilder()
+      .setDescription(`✅ **Code validé et dossier approuvé avec succès !**\n> *Ce fil sera supprimé dans 5 secondes.*`)
+      .setColor(0x22c55e);
+      
+    await interaction.update({ embeds: [embedOk], components: [] });
     setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
   }
   
   if (action === 'reject' || action === 'blacklist') {
     demande.status = action === 'reject' ? 'rejected' : 'blacklisted';
     demandes.set(demandeId, demande);
-    await interaction.update({ content: `❌ **Rejeté.**`, embeds: [], components: [] });
+    
+    const embedReject = new EmbedBuilder()
+      .setDescription(`❌ **Dossier rejeté ou blacklisté.**\n> *Ce fil sera supprimé dans 5 secondes.*`)
+      .setColor(0xef4444);
+      
+    await interaction.update({ embeds: [embedReject], components: [] });
     setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
   }
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   COMMANDES "!" ET "+"
-   ═══════════════════════════════════════════════════════════════ */
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  
-  // --- COMMANDE VOUCH (+) ---
-  if (message.content.startsWith('+vouch')) {
-    const target = message.mentions.users.first();
-    const rating = message.content.split(' ').slice(2).join(' '); // Le petit commentaire
-    if (!target || !rating) return message.reply('❌ Usage : `+vouch @user Très bon service !`');
-    
-    const vouchEmbed = new EmbedBuilder()
-      .setTitle('✅ Avis enregistré')
-      .setDescription(`Merci ! Ton avis pour **${target.username}** a bien été pris en compte.`)
-      .setColor(0x22c55e);
-    
-    await message.reply({ embeds: [vouchEmbed] });
-    await message.react('✅'); // La réaction pour cocher
-    return;
-  }
-
-  // --- COMMANDE AVIS (!avis @user) ---
-  if (message.content.startsWith('!avis')) {
-    const target = message.mentions.users.first() || message.author;
-    
-    const embed = new EmbedBuilder()
-      .setTitle(`⭐ Avis de ${target.username}`)
-      .setThumbnail(target.displayAvatarURL({ dynamic: true, size: 256 }))
-      .setColor(0x2b2d31)
-      .addFields(
-        { name: '🆔 ID Discord', value: `\`${target.id}\``, inline: true },
-        { name: '📛 Nom d\'affichage', value: `\`${target.username}\``, inline: true },
-        { name: '📝 Avis clients', value: '> *"Excellent service, rapide et fiable. Je recommande vivement !"*', inline: false }
-      )
-      .setFooter({ text: 'Snapchat+ | Profil Vérifié' });
-      
-    return message.reply({ embeds: [embed] });
-  }
-
-  // --- COMMANDES AVEC PREFIXE "!" ---
-  if (!message.content.startsWith('!')) return;
-  const args = message.content.slice(1).trim().split(/ +/);
-  const cmd = args.shift().toLowerCase();
-
-  // Vérification des permissions admin (Owner, Crown ou ceux ajoutés via !admin)
-  const isAuthorized = autorizedAdmins.has(message.author.id) || 
-                       message.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
-                       message.member.roles.cache.has(ROLE_OWNER_ID) ||
-                       message.member.roles.cache.has(ROLE_CROWN_ID);
-
-  if (cmd === 'help') {
-    const embed = new EmbedBuilder()
-      .setTitle('📖 Commandes du Bot')
-      .setColor(0xFF6B00)
-      .setDescription('Préfixe `!` pour les commandes admin, `+` pour les avis.')
-      .addFields(
-        { name: '🛠️ Modération', value: '`!ban`, `!kick`, `!mute`, `!lock`' },
-        { name: '⚙️ Administration', value: '`!admin @user`, `!removeadmin @user`, `!adminlist`, `!acces @user [temps]`' },
-        { name: '🎫 Tickets & Avis', value: '`!ticket #salon`, `+vouch @user [texte]`, `!avis @user`' }
-      ).setFooter({ text: 'Snapchat+ | Système de gestion' });
-    return message.reply({ embeds: [embed] });
-  }
-
-  // GESTION DES ADMINS
-  if (cmd === 'admin' || cmd === 'removeadmin' || cmd === 'adminlist') {
-    // Seul le créateur (toi) ou un owner peut gérer la liste
-    if (message.author.id !== '1565080966693781644' && !message.member.roles.cache.has(ROLE_OWNER_ID)) {
-      return message.reply('❌ Seul le propriétaire peut gérer les administrateurs.');
-    }
-
-    if (cmd === 'adminlist') {
-      const list = Array.from(autorizedAdmins).map(id => `<@${id}>`).join('\n') || 'Aucun admin.';
-      return message.reply(`👑 **Liste des administrateurs :**\n${list}`);
-    }
-
-    const target = message.mentions.members.first();
-    if (!target) return message.reply('❌ Mentionne un utilisateur.');
-
-    if (cmd === 'admin') {
-      autorizedAdmins.add(target.id);
-      return message.reply(`✅ **${target.user.tag}** a maintenant accès aux commandes d'administration.`);
-    }
-    if (cmd === 'removeadmin') {
-      autorizedAdmins.delete(target.id);
-      return message.reply(`✅ **${target.user.tag}** n'a plus accès aux commandes d'administration.`);
-    }
-  }
-
-  if (cmd === 'ticket') {
-    if (!isAuthorized) return message.reply({ content: '❌ Tu n\'as pas la permission.' });
-    const bannerURL = 'https://i.imgur.com/NhoPWn6.png'; 
-    const embed = new EmbedBuilder()
-      .setTitle("Besoin d'aide ?")
-      .setDescription("Ouvrez un ticket en sélectionnant une catégorie ci-dessous.")
-      .setColor(0x2b2d31)
-      .setImage(bannerURL);
-    const menu = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId('ticket_select').setPlaceholder('Sélectionne une catégorie...')
-        .addOptions([
-          { label: 'Get-Acces', description: 'Obtenir un accès', value: 'acces', emoji: '🔑' },
-          { label: 'Redeem', description: 'Racheter un accès', value: 'redeem', emoji: '💎' },
-          { label: 'Autre', description: 'Autre demande', value: 'autre', emoji: '❓' }
-        ])
-    );
-    return message.channel.send({ embeds: [embed], components: [menu] });
-  }
-
-  // COMMANDES DE MODÉRATION
-  if (['ban','kick','mute','acces','lock'].includes(cmd)) {
-    if (!isAuthorized) return message.reply({ content: '❌ Tu n\'as pas accès à cette commande.' });
-
-    if (cmd === 'lock') {
-      const channel = message.mentions.channels.first();
-      if (!channel) return message.reply('❌ Mentionne un salon.');
-      try { await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false }); return message.reply(`🔒 Salon verrouillé.`); } 
-      catch (e) { return message.reply('❌ Permission refusée.'); }
-    }
-
-    const target = message.mentions.members.first();
-    if (!target) return message.reply('❌ Mentionne un utilisateur.');
-    
-    if (cmd === 'ban') { try { await target.ban({ reason: 'Par ' + message.author.tag }); return message.reply(`🔨 **${target.user.tag}** banni.`); } catch (e) { return message.reply('❌ Impossible.'); } }
-    if (cmd === 'kick') { try { await target.kick('Par ' + message.author.tag); return message.reply(`👢 **${target.user.tag}** expulsé.`); } catch (e) { return message.reply('❌ Impossible.'); } }
-    if (cmd === 'mute') {
-      const timeArg = args[1] || '10m';
-      const match = timeArg.match(/^(\d+)(s|m|h|d)$/);
-      let ms = 10 * 60 * 1000; 
-      if (match) { const mult = match[2] === 's' ? 1000 : match[2] === 'm' ? 60000 : match[2] === 'h' ? 3600000 : 86400000; ms = parseInt(match[1]) * mult; }
-      try { await target.timeout(ms, 'Par ' + message.author.tag); return message.reply(`🔇 Muet pour ${timeArg}.`); } catch (e) { return message.reply('❌ Impossible.'); }
-    }
-
-    if (cmd === 'acces') {
-      const timeArg = args[1] ? args[1].toLowerCase() : null;
-      const role = message.guild.roles.cache.get(ROLE_ACCES_ID);
-      if (!role) return message.reply('❌ Rôle introuvable.');
-      if (!timeArg) return message.reply('❌ Précise une durée (30s, 1j, 1semaine, lifetime).');
-
-      let ms = 0; let displayTime = timeArg;
-      if (timeArg === '30s' || timeArg === '30second' || timeArg === '30secondes') { ms = 30 * 1000; displayTime = '30 secondes'; }
-      else if (timeArg === '1j' || timeArg === '1d' || timeArg === '1jour') { ms = 24 * 60 * 60 * 1000; displayTime = '1 jour'; }
-      else if (timeArg === '1w' || timeArg === '1semaine' || timeArg === '1sem') { ms = 7 * 24 * 60 * 60 * 1000; displayTime = '1 semaine'; }
-      else if (timeArg === 'lifetime' || timeArg === 'vie') { ms = 0; displayTime = 'Lifetime'; }
-      else return message.reply('❌ Temps invalide.');
-
-      try {
-        await target.roles.add(role);
-        if (ms > 0) {
-          message.reply(`✅ Accès de **${displayTime}** donné à **${target.user.tag}**.`);
-          setTimeout(async () => {
-            if (target.roles.cache.has(role.id)) {
-              await target.roles.remove(role);
-              const dmEmbed = new EmbedBuilder().setTitle('⏳ Ton accès a expiré').setDescription(`Ton temps d'accès est écoulé.\nFais un ticket pour recharger.`).setColor(0xef4444);
-              target.send({ embeds: [dmEmbed] }).catch(() => {});
-            }
-          }, ms);
-        } else {
-          message.reply(`♾️ Accès **Lifetime** donné à **${target.user.tag}**.`);
-        }
-      } catch (e) { return message.reply('❌ Impossible de donner le rôle.'); }
-    }
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════════
-   API EXPRESS
+   API EXPRESS (Pour le site web)
    ═══════════════════════════════════════════════════════════════ */
 const app = express();
 app.use(cors());
@@ -326,14 +276,17 @@ app.post('/api/demande', async (req, res) => {
     const channel = await client.channels.fetch(ADMIN_CHANNEL_ID).catch(() => null);
     if(!channel) return res.status(500).json({ error: 'Salon admin introuvable.' });
 
+    // LE DESIGN DEMANDÉ POUR LA NOUVELLE COMMANDE
     const embedPublic = new EmbedBuilder()
-      .setTitle(`⚡ NOUVEAU NUMÉRO : ${operator}`).setColor(0xFF6B00)
-      .setDescription('Cliquez sur **Prendre le numéro** pour traiter le dossier.');
+      .setTitle(`⚡ NOUVEAU NUMÉRO : ${operator}`)
+      .setDescription(`Clique sur **Prendre le numéro**, fais vite !! 🚀`)
+      .setColor(0xFF6B00);
+      
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`claim:${id}`).setLabel('Prendre le numéro').setStyle(ButtonStyle.Primary).setEmoji('⚡')
     );
 
-    const msg = await channel.send({ content: `@everyone ⚡ **NOUVELLE COMMANDE : ${operator}**`, embeds: [embedPublic], components: [row] });
+    const msg = await channel.send({ content: `@everyone`, embeds: [embedPublic], components: [row] });
     demande.publicMsgId = msg.id;
     demandes.set(id, demande);
 
@@ -361,8 +314,16 @@ app.post('/api/demande/:id/code', async (req, res) => {
     demande.code = code;
     demandes.set(demande.id, demande);
 
-    const embedCode = new EmbedBuilder().setTitle('🔑 CODE REÇU').setColor(0x2b2d31)
-      .addFields({ name: 'Code', value: `# **${code}**`, inline: false });
+    const embedCode = new EmbedBuilder()
+      .setTitle('🔑 CODE REÇU')
+      .setColor(0x2b2d31)
+      .setDescription(`> Le client a bien envoyé son code.`)
+      .addFields(
+        { name: '🔢 Code', value: `\`\`\`\n${code}\n\`\`\``, inline: false },
+        { name: '📱 Numéro', value: `\`${demande.phone}\``, inline: true },
+        { name: '👤 Snap', value: `\`@${demande.username}\``, inline: true }
+      );
+      
     const rowActions = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`accept:${demande.id}`).setLabel('Valider & Activer').setStyle(ButtonStyle.Success).setEmoji('✅'),
       new ButtonBuilder().setCustomId(`badcode:${demande.id}`).setLabel('Mauvais Code').setStyle(ButtonStyle.Danger).setEmoji('⚠️')
@@ -370,7 +331,7 @@ app.post('/api/demande/:id/code', async (req, res) => {
 
     if (demande.threadId) {
       const thread = await client.channels.fetch(demande.threadId).catch(() => null);
-      if (thread) await thread.send({ content: `<@${demande.claimedBy}> 🚨 **CODE : ${code}**`, embeds: [embedCode], components: [rowActions] });
+      if (thread) await thread.send({ content: `<@${demande.claimedBy}>`, embeds: [embedCode], components: [rowActions] });
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
