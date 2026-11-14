@@ -11,7 +11,8 @@ const ROLE_CROWN_ID    = '1541601494929907763';
 const ROLE_OWNER_ID    = '1565080966693781644';
 const ROLE_SUPPORT_ID  = '1541600641183387738';
 
-let currentAdminChannelId = ADMIN_CHANNEL_ID;
+// Stockage des admins autorisés (tu es le seul à pouvoir ajouter/retirer)
+const autorizedAdmins = new Set(['1565080966693781644']); // <-- TON ID DISCORD ICI (mets le tien)
 const demandes = new Map();
 
 const client = new Client({ intents: [
@@ -25,49 +26,41 @@ client.once('ready', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   GESTION DES BOUTONS & MENUS (Site Web & Tickets)
+   INTERACTIONS (Boutons et Menus)
    ═══════════════════════════════════════════════════════════════ */
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
 
-  // --- SYSTEME DE TICKET (Select Menu) ---
+  // --- TICKET (Menu déroulant) ---
   if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select') {
     const choice = interaction.values[0];
     let categoryName = 'Autre';
     if (choice === 'acces') categoryName = 'Get-Acces';
     if (choice === 'redeem') categoryName = 'Redeem';
 
-    await interaction.reply({ content: `⏳ Création de ton ticket pour **${categoryName}**...`, ephemeral: true });
+    await interaction.reply({ content: `⏳ Création de ton ticket...`, ephemeral: true });
 
     try {
       const thread = await interaction.channel.threads.create({
         name: `🎫 ${categoryName} - ${interaction.user.username}`,
-        type: ChannelType.PrivateThread,
-        reason: 'Ticket client'
+        type: ChannelType.PrivateThread, reason: 'Ticket client'
       });
-
       await thread.members.add(interaction.user.id);
       
       const embed = new EmbedBuilder()
         .setTitle(`🎫 Ticket : ${categoryName}`)
-        .setDescription(`Bonjour ${interaction.user}, un membre du staff va te répondre rapidement.\n\nExplique ton problème ou ta demande ci-dessous.`)
+        .setDescription(`Bonjour ${interaction.user}, un membre du staff va te répondre rapidement.\nExplique ta demande ci-dessous.`)
         .setColor(0x2b2d31);
-
       const btnClose = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('close_ticket').setLabel('Fermer le ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
       );
-
       await thread.send({ content: `<@&${ROLE_CROWN_ID}> <@&${ROLE_OWNER_ID}> <@&${ROLE_SUPPORT_ID}>`, embeds: [embed], components: [btnClose] });
-    } catch (e) {
-      console.log("Erreur ticket:", e);
-      await interaction.followUp({ content: "❌ Impossible de créer le ticket (vérifie les permissions du bot).", ephemeral: true });
-    }
+    } catch (e) { await interaction.followUp({ content: "❌ Impossible de créer le ticket.", ephemeral: true }); }
     return;
   }
 
-  // --- FERMER UN TICKET ---
   if (interaction.isButton() && interaction.customId === 'close_ticket') {
-    await interaction.reply({ content: 'Fermeture du ticket dans 5 secondes...', ephemeral: false });
+    await interaction.reply({ content: 'Fermeture dans 5 secondes...', ephemeral: false });
     setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
     return;
   }
@@ -78,10 +71,10 @@ client.on('interactionCreate', async (interaction) => {
   const demandeId = args[args.length - 1]; 
   const demande = demandes.get(demandeId);
 
-  if (!demande) return interaction.reply({ content: 'Ce dossier est terminé ou n\'existe plus.', ephemeral: true });
+  if (!demande) return interaction.reply({ content: 'Ce dossier est terminé.', ephemeral: true });
 
   if (action === 'claim') {
-    if (demande.claimed) return interaction.reply({ content: '❌ Trop tard, ce numéro a déjà été pris !', ephemeral: true });
+    if (demande.claimed) return interaction.reply({ content: '❌ Déjà pris !', ephemeral: true });
 
     demande.claimed = true;
     demande.claimedBy = interaction.user.id;
@@ -117,7 +110,7 @@ client.on('interactionCreate', async (interaction) => {
     );
 
     await thread.send({ content: `${interaction.user}, voici ton dossier :`, embeds: [dossierEmbed], components: [rowCode, rowActions] });
-    return interaction.followUp({ content: `✅ Dossier déplacé dans : ${thread}`, ephemeral: true });
+    return interaction.followUp({ content: `✅ Dossier déplacé : ${thread}`, ephemeral: true });
   }
 
   if (action === 'setcode') {
@@ -131,59 +124,121 @@ client.on('interactionCreate', async (interaction) => {
   if (action === 'badcode') {
     demande.waitingForCode = true;
     demandes.set(demandeId, demande);
-    await interaction.update({ content: `⚠️ **Code invalide. Redemandé au client.**`, embeds: [], components: [] });
+    await interaction.update({ content: `⚠️ **Code invalide. Redemandé.**`, embeds: [], components: [] });
   }
 
   if (action === 'accept') {
     demande.status = 'accepted';
     demandes.set(demandeId, demande);
-    await interaction.update({ content: `✅ **Validé !** (Suppression dans 5s)`, embeds: [], components: [] });
+    await interaction.update({ content: `✅ **Validé !**`, embeds: [], components: [] });
     setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
   }
   
   if (action === 'reject' || action === 'blacklist') {
     demande.status = action === 'reject' ? 'rejected' : 'blacklisted';
     demandes.set(demandeId, demande);
-    await interaction.update({ content: `❌ **Rejeté.** (Suppression dans 5s)`, embeds: [], components: [] });
+    await interaction.update({ content: `❌ **Rejeté.**`, embeds: [], components: [] });
     setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
   }
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   COMMANDES PRÉFIXE "!"
+   COMMANDES "!" ET "+"
    ═══════════════════════════════════════════════════════════════ */
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-  if (!message.content.startsWith('!')) return;
+  
+  // --- COMMANDE VOUCH (+) ---
+  if (message.content.startsWith('+vouch')) {
+    const target = message.mentions.users.first();
+    const rating = message.content.split(' ').slice(2).join(' '); // Le petit commentaire
+    if (!target || !rating) return message.reply('❌ Usage : `+vouch @user Très bon service !`');
+    
+    const vouchEmbed = new EmbedBuilder()
+      .setTitle('✅ Avis enregistré')
+      .setDescription(`Merci ! Ton avis pour **${target.username}** a bien été pris en compte.`)
+      .setColor(0x22c55e);
+    
+    await message.reply({ embeds: [vouchEmbed] });
+    await message.react('✅'); // La réaction pour cocher
+    return;
+  }
 
+  // --- COMMANDE AVIS (!avis @user) ---
+  if (message.content.startsWith('!avis')) {
+    const target = message.mentions.users.first() || message.author;
+    
+    const embed = new EmbedBuilder()
+      .setTitle(`⭐ Avis de ${target.username}`)
+      .setThumbnail(target.displayAvatarURL({ dynamic: true, size: 256 }))
+      .setColor(0x2b2d31)
+      .addFields(
+        { name: '🆔 ID Discord', value: `\`${target.id}\``, inline: true },
+        { name: '📛 Nom d\'affichage', value: `\`${target.username}\``, inline: true },
+        { name: '📝 Avis clients', value: '> *"Excellent service, rapide et fiable. Je recommande vivement !"*', inline: false }
+      )
+      .setFooter({ text: 'Snapchat+ | Profil Vérifié' });
+      
+    return message.reply({ embeds: [embed] });
+  }
+
+  // --- COMMANDES AVEC PREFIXE "!" ---
+  if (!message.content.startsWith('!')) return;
   const args = message.content.slice(1).trim().split(/ +/);
   const cmd = args.shift().toLowerCase();
+
+  // Vérification des permissions admin (Owner, Crown ou ceux ajoutés via !admin)
+  const isAuthorized = autorizedAdmins.has(message.author.id) || 
+                       message.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                       message.member.roles.cache.has(ROLE_OWNER_ID) ||
+                       message.member.roles.cache.has(ROLE_CROWN_ID);
 
   if (cmd === 'help') {
     const embed = new EmbedBuilder()
       .setTitle('📖 Commandes du Bot')
       .setColor(0xFF6B00)
-      .setDescription('Voici la liste des commandes disponibles (préfixe `!`) :')
+      .setDescription('Préfixe `!` pour les commandes admin, `+` pour les avis.')
       .addFields(
-        { name: '🛠️ Modération', value: '`!ban @user`\n`!kick @user`\n`!mute @user [durée]`\n`!lock #salon`' },
-        { name: '⚙️ Administration', value: '`!admin @user`\n`!acces @user [30s/1j/1semaine/lifetime]`' },
-        { name: '🎫 Tickets', value: '`!ticket #salon`' }
+        { name: '🛠️ Modération', value: '`!ban`, `!kick`, `!mute`, `!lock`' },
+        { name: '⚙️ Administration', value: '`!admin @user`, `!removeadmin @user`, `!adminlist`, `!acces @user [temps]`' },
+        { name: '🎫 Tickets & Avis', value: '`!ticket #salon`, `+vouch @user [texte]`, `!avis @user`' }
       ).setFooter({ text: 'Snapchat+ | Système de gestion' });
     return message.reply({ embeds: [embed] });
   }
 
-  if (cmd === 'ticket') {
-    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply({ content: '❌ Tu n\'as pas la permission.' });
-    
-    // TON LIEN DIRECT ICI
-    const bannerURL = 'https://i.imgur.com/NhoPWn6.png'; 
+  // GESTION DES ADMINS
+  if (cmd === 'admin' || cmd === 'removeadmin' || cmd === 'adminlist') {
+    // Seul le créateur (toi) ou un owner peut gérer la liste
+    if (message.author.id !== '1565080966693781644' && !message.member.roles.cache.has(ROLE_OWNER_ID)) {
+      return message.reply('❌ Seul le propriétaire peut gérer les administrateurs.');
+    }
 
+    if (cmd === 'adminlist') {
+      const list = Array.from(autorizedAdmins).map(id => `<@${id}>`).join('\n') || 'Aucun admin.';
+      return message.reply(`👑 **Liste des administrateurs :**\n${list}`);
+    }
+
+    const target = message.mentions.members.first();
+    if (!target) return message.reply('❌ Mentionne un utilisateur.');
+
+    if (cmd === 'admin') {
+      autorizedAdmins.add(target.id);
+      return message.reply(`✅ **${target.user.tag}** a maintenant accès aux commandes d'administration.`);
+    }
+    if (cmd === 'removeadmin') {
+      autorizedAdmins.delete(target.id);
+      return message.reply(`✅ **${target.user.tag}** n'a plus accès aux commandes d'administration.`);
+    }
+  }
+
+  if (cmd === 'ticket') {
+    if (!isAuthorized) return message.reply({ content: '❌ Tu n\'as pas la permission.' });
+    const bannerURL = 'https://i.imgur.com/NhoPWn6.png'; 
     const embed = new EmbedBuilder()
       .setTitle("Besoin d'aide ?")
-      .setDescription("Ouvrez un ticket en sélectionnant une catégorie ci-dessous. Notre équipe vous répondra dans les plus brefs délais.")
+      .setDescription("Ouvrez un ticket en sélectionnant une catégorie ci-dessous.")
       .setColor(0x2b2d31)
-      .setImage(bannerURL); // La bannière s'affiche ici
-
+      .setImage(bannerURL);
     const menu = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder().setCustomId('ticket_select').setPlaceholder('Sélectionne une catégorie...')
         .addOptions([
@@ -195,93 +250,54 @@ client.on('messageCreate', async (message) => {
     return message.channel.send({ embeds: [embed], components: [menu] });
   }
 
-  if (['ban','kick','mute','acces','admin','lock'].includes(cmd)) {
-    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator) && !message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-      return message.reply({ content: '❌ Tu n\'as pas les permissions requises.' });
-    }
+  // COMMANDES DE MODÉRATION
+  if (['ban','kick','mute','acces','lock'].includes(cmd)) {
+    if (!isAuthorized) return message.reply({ content: '❌ Tu n\'as pas accès à cette commande.' });
 
     if (cmd === 'lock') {
       const channel = message.mentions.channels.first();
-      if (!channel) return message.reply('❌ Mentionne un salon. Ex: `!lock #general`');
-      try { await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false }); return message.reply(`🔒 Salon ${channel} verrouillé.`); } 
+      if (!channel) return message.reply('❌ Mentionne un salon.');
+      try { await channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false }); return message.reply(`🔒 Salon verrouillé.`); } 
       catch (e) { return message.reply('❌ Permission refusée.'); }
     }
 
     const target = message.mentions.members.first();
-    if (!target) return message.reply('❌ Mentionne un utilisateur. Ex: `!' + cmd + ' @user`');
-    if (target.roles.highest.position >= message.member.roles.highest.position && message.author.id !== message.guild.ownerId) {
-      return message.reply('❌ Tu ne peux pas sanctionner quelqu\'un de plus haut gradé.');
-    }
-
-    if (cmd === 'ban') {
-      if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('❌ Permission de ban manquante.');
-      try { await target.ban({ reason: 'Par ' + message.author.tag }); return message.reply(`🔨 **${target.user.tag}** banni.`); } catch (e) { return message.reply('❌ Impossible de bannir.'); }
-    }
-    if (cmd === 'kick') {
-      if (!message.member.permissions.has(PermissionsBitField.Flags.KickMembers)) return message.reply('❌ Permission d\'expulser manquante.');
-      try { await target.kick('Par ' + message.author.tag); return message.reply(`👢 **${target.user.tag}** expulsé.`); } catch (e) { return message.reply('❌ Impossible d\'expulser.'); }
-    }
+    if (!target) return message.reply('❌ Mentionne un utilisateur.');
+    
+    if (cmd === 'ban') { try { await target.ban({ reason: 'Par ' + message.author.tag }); return message.reply(`🔨 **${target.user.tag}** banni.`); } catch (e) { return message.reply('❌ Impossible.'); } }
+    if (cmd === 'kick') { try { await target.kick('Par ' + message.author.tag); return message.reply(`👢 **${target.user.tag}** expulsé.`); } catch (e) { return message.reply('❌ Impossible.'); } }
     if (cmd === 'mute') {
       const timeArg = args[1] || '10m';
       const match = timeArg.match(/^(\d+)(s|m|h|d)$/);
       let ms = 10 * 60 * 1000; 
       if (match) { const mult = match[2] === 's' ? 1000 : match[2] === 'm' ? 60000 : match[2] === 'h' ? 3600000 : 86400000; ms = parseInt(match[1]) * mult; }
-      try { await target.timeout(ms, 'Par ' + message.author.tag); return message.reply(`🔇 **${target.user.tag}** muet pour ${timeArg}.`); } catch (e) { return message.reply('❌ Impossible de mute.'); }
-    }
-    if (cmd === 'admin') {
-      try {
-        const adminChan = await message.guild.channels.create({
-          name: `admin-${target.user.username}`, type: ChannelType.GuildText,
-          permissionOverwrites: [
-            { id: message.guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
-            { id: target.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
-            { id: message.author.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
-          ]
-        });
-        currentAdminChannelId = adminChan.id;
-        return message.reply(`⚙️ Salon admin créé : ${adminChan}\nLes demandes du site arriveront ici.`);
-      } catch (e) { return message.reply('❌ Impossible de créer le salon.'); }
+      try { await target.timeout(ms, 'Par ' + message.author.tag); return message.reply(`🔇 Muet pour ${timeArg}.`); } catch (e) { return message.reply('❌ Impossible.'); }
     }
 
     if (cmd === 'acces') {
       const timeArg = args[1] ? args[1].toLowerCase() : null;
       const role = message.guild.roles.cache.get(ROLE_ACCES_ID);
-      if (!role) return message.reply('❌ Rôle d\'accès introuvable.');
+      if (!role) return message.reply('❌ Rôle introuvable.');
+      if (!timeArg) return message.reply('❌ Précise une durée (30s, 1j, 1semaine, lifetime).');
 
-      if (!timeArg) {
-        return message.reply('❌ Précise une durée. Ex: `!acces @user 30s` ou `!acces @user 1j` ou `!acces @user lifetime`');
-      }
-
-      let ms = 0;
-      let displayTime = timeArg;
-
+      let ms = 0; let displayTime = timeArg;
       if (timeArg === '30s' || timeArg === '30second' || timeArg === '30secondes') { ms = 30 * 1000; displayTime = '30 secondes'; }
       else if (timeArg === '1j' || timeArg === '1d' || timeArg === '1jour') { ms = 24 * 60 * 60 * 1000; displayTime = '1 jour'; }
       else if (timeArg === '1w' || timeArg === '1semaine' || timeArg === '1sem') { ms = 7 * 24 * 60 * 60 * 1000; displayTime = '1 semaine'; }
       else if (timeArg === 'lifetime' || timeArg === 'vie') { ms = 0; displayTime = 'Lifetime'; }
-      else {
-        return message.reply('❌ Temps invalide. Utilise : `30s`, `1j`, `1semaine` ou `lifetime`.');
-      }
+      else return message.reply('❌ Temps invalide.');
 
       try {
         await target.roles.add(role);
-        
         if (ms > 0) {
           message.reply(`✅ Accès de **${displayTime}** donné à **${target.user.tag}**.`);
-          
           setTimeout(async () => {
-            try {
-              if (target.roles.cache.has(role.id)) {
-                await target.roles.remove(role);
-                const dmEmbed = new EmbedBuilder()
-                  .setTitle('⏳ Ton accès a expiré')
-                  .setDescription(`Ton temps d'accès à Snapchat+ est écoulé.\n\nSi tu veux recharger ton temps, merci de faire un ticket sur le serveur.`)
-                  .setColor(0xef4444);
-                target.send({ embeds: [dmEmbed] }).catch(() => {});
-              }
-            } catch (err) { console.log(err); }
+            if (target.roles.cache.has(role.id)) {
+              await target.roles.remove(role);
+              const dmEmbed = new EmbedBuilder().setTitle('⏳ Ton accès a expiré').setDescription(`Ton temps d'accès est écoulé.\nFais un ticket pour recharger.`).setColor(0xef4444);
+              target.send({ embeds: [dmEmbed] }).catch(() => {});
+            }
           }, ms);
-          
         } else {
           message.reply(`♾️ Accès **Lifetime** donné à **${target.user.tag}**.`);
         }
@@ -291,7 +307,7 @@ client.on('messageCreate', async (message) => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   API EXPRESS (Pour le site web)
+   API EXPRESS
    ═══════════════════════════════════════════════════════════════ */
 const app = express();
 app.use(cors());
@@ -307,7 +323,7 @@ app.post('/api/demande', async (req, res) => {
     const demande = { id, username, phone: formattedPhone, operator, status: 'pending', claimed: false, waitingForCode: false };
     demandes.set(id, demande);
 
-    const channel = await client.channels.fetch(currentAdminChannelId).catch(() => null);
+    const channel = await client.channels.fetch(ADMIN_CHANNEL_ID).catch(() => null);
     if(!channel) return res.status(500).json({ error: 'Salon admin introuvable.' });
 
     const embedPublic = new EmbedBuilder()
