@@ -4,9 +4,10 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
 const DISCORD_TOKEN    = process.env.DISCORD_TOKEN    || 'TON_TOKEN_ICI';
-const CLIENT_ID        = process.env.CLIENT_ID        || 'TON_CLIENT_ID_ICI'; // ⚠️ À METTRE DANS RAILWAY
+const CLIENT_ID        = process.env.CLIENT_ID        || 'TON_CLIENT_ID_ICI'; 
 const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1570890792745304245';
 
+const ROLE_ACCES_ID    = '1541600868787556412'; 
 const ROLE_CROWN_ID    = '1541601494929907763';
 const ROLE_OWNER_ID    = '1565080966693781644';
 const ROLE_SUPPORT_ID  = '1541600641183387738';
@@ -35,7 +36,24 @@ client.once('ready', async () => {
           .setRequired(true)),
     new SlashCommandBuilder()
       .setName('list')
-      .setDescription('Afficher la liste de toutes les demandes (codes, blacklist, etc.)')
+      .setDescription('Afficher la liste de toutes les demandes (codes, blacklist, etc.)'),
+    new SlashCommandBuilder()
+      .setName('acces')
+      .setDescription('Donner un accès temporaire ou à vie à un utilisateur')
+      .addUserOption(option =>
+        option.setName('user')
+          .setDescription('L\'utilisateur à qui donner l\'accès')
+          .setRequired(true))
+      .addStringOption(option =>
+        option.setName('duree')
+          .setDescription('La durée de l\'accès')
+          .setRequired(true)
+          .addChoices(
+            { name: '30 secondes', value: '30s' },
+            { name: '1 jour', value: '1d' },
+            { name: '1 semaine', value: '1w' },
+            { name: 'Lifetime (À vie)', value: 'lifetime' }
+          ))
   ].map(command => command.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
@@ -113,6 +131,49 @@ client.on('interactionCreate', async (interaction) => {
 
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
+
+    // /acces @user [durée]
+    if (interaction.commandName === 'acces') {
+      const target = interaction.options.getMember('user');
+      const timeArg = interaction.options.getString('duree');
+      const role = interaction.guild.roles.cache.get(ROLE_ACCES_ID);
+
+      if (!role) return interaction.reply({ content: '❌ Rôle d\'accès introuvable.', ephemeral: true });
+
+      let ms = 0;
+      let displayTime = timeArg;
+
+      if (timeArg === '30s') { ms = 30 * 1000; displayTime = '30 secondes'; }
+      else if (timeArg === '1d') { ms = 24 * 60 * 60 * 1000; displayTime = '1 jour'; }
+      else if (timeArg === '1w') { ms = 7 * 24 * 60 * 60 * 1000; displayTime = '1 semaine'; }
+      else if (timeArg === 'lifetime') { ms = 0; displayTime = 'Lifetime'; }
+
+      try {
+        await target.roles.add(role);
+        
+        if (ms > 0) {
+          await interaction.reply({ content: `✅ Accès de **${displayTime}** donné à **${target.user.tag}**.`, ephemeral: true });
+          
+          setTimeout(async () => {
+            try {
+              if (target.roles.cache.has(role.id)) {
+                await target.roles.remove(role);
+                const dmEmbed = new EmbedBuilder()
+                  .setTitle('⏳ Ton accès a expiré')
+                  .setDescription(`Ton temps d'accès à Snapchat+ est écoulé.\n\nSi tu veux recharger ton temps, merci de faire un ticket sur le serveur.`)
+                  .setColor(0xef4444);
+                target.send({ embeds: [dmEmbed] }).catch(() => {});
+              }
+            } catch (err) { console.log(err); }
+          }, ms);
+          
+        } else {
+          await interaction.reply({ content: `♾️ Accès **Lifetime** donné à **${target.user.tag}**.`, ephemeral: true });
+        }
+      } catch (e) { 
+        return interaction.reply({ content: '❌ Impossible de donner le rôle (vérifie que le rôle du bot est au-dessus).', ephemeral: true }); 
+      }
+    }
   }
 
   // --- MENUS ET BOUTONS ---
@@ -166,7 +227,7 @@ client.on('interactionCreate', async (interaction) => {
     demande.claimedBy = interaction.user.id;
     demandes.set(demandeId, demande);
 
-    // Modification du message original : suppression du bouton, ajout du texte "Pris par"
+    // Modification du message original
     const embedPris = new EmbedBuilder()
       .setTitle(`⚡ NOUVEAU NUMÉRO : ${demande.operator}`)
       .setDescription(`**Pris par ${interaction.user}**`)
@@ -276,7 +337,6 @@ app.post('/api/demande', async (req, res) => {
     const channel = await client.channels.fetch(ADMIN_CHANNEL_ID).catch(() => null);
     if(!channel) return res.status(500).json({ error: 'Salon admin introuvable.' });
 
-    // LE DESIGN DEMANDÉ POUR LA NOUVELLE COMMANDE
     const embedPublic = new EmbedBuilder()
       .setTitle(`⚡ NOUVEAU NUMÉRO : ${operator}`)
       .setDescription(`Clique sur **Prendre le numéro**, fais vite !! 🚀`)
