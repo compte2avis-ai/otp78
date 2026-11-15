@@ -1,235 +1,183 @@
-const { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes, PermissionsBitField, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const express = require('express');
+const cors = require('cors');
+const { v4: uuidv4 } = require('uuid');
 
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN || 'TON_TOKEN_ICI';
-const CLIENT_ID     = process.env.CLIENT_ID     || 'TON_CLIENT_ID_ICI'; 
+const DISCORD_TOKEN    = process.env.DISCORD_TOKEN    || 'TON_TOKEN_ICI';
+const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '1570890792745304245';
 
-// ⚠️ TON ID DISCORD (Créateur)
-const OWNER_ID = '1565080966693781644'; 
-
-const adminsAutorises = new Set([OWNER_ID]);
-let customEmojis = { 1: '1️⃣', 2: '2️⃣', 3: '3️⃣' };
-
-const paniers = new Map();
+const demandes = new Map();
 
 const client = new Client({ intents: [
-  GatewayIntentBits.Guilds,
-  GatewayIntentBits.GuildMembers,
-  GatewayIntentBits.GuildMessages
+  GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers
 ]});
 
-client.once('ready', async () => {
+client.once('ready', () => {
   console.log(`✅ Bot connecté : ${client.user.tag}`);
-  client.user.setActivity('/ticket | /help', { type: 'WATCHING' });
-
-  const commands = [
-    new SlashCommandBuilder().setName('ban').setDescription('Bannir').addUserOption(o => o.setName('user').setDescription('Utilisateur').setRequired(true)),
-    new SlashCommandBuilder().setName('kick').setDescription('Expulser').addUserOption(o => o.setName('user').setDescription('Utilisateur').setRequired(true)),
-    new SlashCommandBuilder().setName('mute').setDescription('Mute').addUserOption(o => o.setName('user').setDescription('Utilisateur').setRequired(true)).addIntegerOption(o => o.setName('minutes').setDescription('Durée').setRequired(true)),
-    new SlashCommandBuilder().setName('admin').setDescription('Ajouter un admin').addUserOption(o => o.setName('user').setDescription('Utilisateur').setRequired(true)),
-    new SlashCommandBuilder().setName('removeadmin').setDescription('Retirer un admin').addUserOption(o => o.setName('user').setDescription('Utilisateur').setRequired(true)),
-    new SlashCommandBuilder().setName('adminlist').setDescription('Voir les admins'),
-    new SlashCommandBuilder().setName('ticket').setDescription('Envoyer le panneau').addChannelOption(o => o.setName('salon').setDescription('Salon').setRequired(true)),
-    new SlashCommandBuilder().setName('emojis').setDescription('Configurer les emojis').addStringOption(o => o.setName('emoji1').setDescription('Emoji 1').setRequired(true)).addStringOption(o => o.setName('emoji2').setDescription('Emoji 2').setRequired(true)).addStringOption(o => o.setName('emoji3').setDescription('Emoji 3').setRequired(true)),
-    new SlashCommandBuilder().setName('help').setDescription('Affiche les commandes')
-  ].map(c => c.toJSON());
-
-  const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-  try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) { console.error(e); }
+  client.user.setActivity('Réception des demandes', { type: 'WATCHING' });
 });
 
 client.on('interactionCreate', async (interaction) => {
-  // ============ COMMANDES SLASH ============
-  if (interaction.isChatInputCommand()) {
-    const { commandName, user, member } = interaction;
-    const hasPermission = adminsAutorises.has(user.id) || member.permissions.has(PermissionsBitField.Flags.Administrator);
+  if (!interaction.isButton()) return;
 
-    if (!hasPermission) return interaction.reply({ content: "❌ **T'es bête ou quoi ? T'es pas admin ici.**", ephemeral: true });
-
-    if (commandName === 'emojis') {
-      customEmojis[1] = interaction.options.getString('emoji1');
-      customEmojis[2] = interaction.options.getString('emoji2');
-      customEmojis[3] = interaction.options.getString('emoji3');
-      const embed = new EmbedBuilder().setTitle('✅ Emojis mis à jour').setColor(0x22c55e)
-        .setDescription(`**1er emoji :** ${customEmojis[1]}\n**2ème emoji :** ${customEmojis[2]}\n**3ème emoji :** ${customEmojis[3]}`);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-
-    if (commandName === 'ticket') {
-      const channel = interaction.options.getChannel('salon');
-      const embed = new EmbedBuilder()
-        .setTitle('🎟️ Ticket - Commandes')
-        .setDescription('> Choisis ton type de commande ci-dessous.')
-        .setColor(0x2b2d31)
-        .addFields(
-          { name: `${customEmojis[1]} CC Classic`, value: '> **Prix : 25 €**', inline: true },
-          { name: `${customEmojis[2]} CC Gold`, value: '> **Prix : 50 €**', inline: true },
-          { name: `${customEmojis[3]} CC Infinite`, value: '> **Prix : 80 €**', inline: true },
-          { name: 'Autres Produits', value: '> **Divers**', inline: true }
-        );
-      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_ticket_menu').setLabel('Choisir un produit').setStyle(ButtonStyle.Primary).setEmoji('🛒'));
-      await channel.send({ embeds: [embed], components: [row] });
-      return interaction.reply({ content: `✅ Panneau envoyé.`, ephemeral: true });
-    }
-
-    if (commandName === 'adminlist') {
-      const embed = new EmbedBuilder().setTitle('👑 Liste des Administrateurs').setColor(0x2b2d31)
-        .setDescription(Array.from(adminsAutorises).map(id => `> <@${id}>`).join('\n'));
-      return interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-    if (commandName === 'admin') {
-      if (user.id !== OWNER_ID) return interaction.reply({ content: "❌ Créateur seulement.", ephemeral: true });
-      adminsAutorises.add(interaction.options.getUser('user').id);
-      return interaction.reply({ content: `✅ Ajouté.` });
-    }
-    if (commandName === 'removeadmin') {
-      if (user.id !== OWNER_ID) return interaction.reply({ content: "❌ Créateur seulement.", ephemeral: true });
-      adminsAutorises.delete(interaction.options.getUser('user').id);
-      return interaction.reply({ content: `✅ Retiré.` });
-    }
-    if (commandName === 'help') {
-      const embed = new EmbedBuilder().setTitle('📖 Commandes').setColor(0x2b2d31)
-        .addFields(
-          { name: '🛠️ Modération', value: '`/ban`, `/kick`, `/mute`' },
-          { name: '🎫 Ticket', value: '`/ticket #salon`' },
-          { name: '⚙️ Config', value: '`/admin`, `/removeadmin`, `/adminlist`, `/emojis`' }
-        );
-      return interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-    if (['ban', 'kick', 'mute'].includes(commandName)) {
-      const target = interaction.options.getMember('user');
-      if (!target) return interaction.reply({ content: "❌ Introuvable.", ephemeral: true });
-      if (commandName === 'ban') { try { await target.ban({ reason: 'Par ' + user.tag }); return interaction.reply(`🔨 Banni.`); } catch(e) { return interaction.reply({content:'❌ Impossible',ephemeral:true}); } }
-      if (commandName === 'kick') { try { await target.kick('Par ' + user.tag); return interaction.reply(`👢 Expulsé.`); } catch(e) { return interaction.reply({content:'❌ Impossible',ephemeral:true}); } }
-      if (commandName === 'mute') { try { await target.timeout(interaction.options.getInteger('minutes')*60000); return interaction.reply(`🔇 Muet.`); } catch(e) { return interaction.reply({content:'❌ Impossible',ephemeral:true}); } }
-    }
-  }
-
-  // ============ TUNNEL ============
+  const args = interaction.customId.split(':');
+  const action = args[0];
+  const demandeId = args[args.length - 1]; 
+  const demande = demandes.get(demandeId);
   
-  // 1. Choix du produit
-  if (interaction.isButton() && interaction.customId === 'open_ticket_menu') {
-    const menu = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('select_product')
-        .setPlaceholder('Sélectionne ton produit...')
-        .addOptions([
-          { label: 'CC Classic', description: '25 €', value: 'classic', emoji: customEmojis[1] },
-          { label: 'CC Gold', description: '50 €', value: 'gold', emoji: customEmojis[2] },
-          { label: 'CC Infinite', description: '80 €', value: 'infinite', emoji: customEmojis[3] },
-          // ⚠️ Option sans emoji
-          { label: 'Autres Produits', description: 'Divers', value: 'autre' }
-        ])
-    );
-    return interaction.reply({ content: 'Quel produit veux-tu acheter ?', components: [menu], ephemeral: true });
-  }
+  if (!demande) return interaction.reply({ content: 'Ce dossier est terminé ou n\'existe plus.', ephemeral: true });
 
-  // 2. Choix du moyen de paiement
-  if (interaction.isStringSelectMenu() && interaction.customId === 'select_product') {
-    const choice = interaction.values[0];
-    let productName = ''; let price = ''; let emojiUsed = '';
+  // --- PRENDRE LA DEMANDE ---
+  if (action === 'claim') {
+    if (demande.claimed) return interaction.reply({ content: '❌ Déjà pris !', ephemeral: true });
     
-    if (choice === 'classic') { productName = 'CC Classic'; price = '25 €'; emojiUsed = customEmojis[1]; }
-    if (choice === 'gold') { productName = 'CC Gold'; price = '50 €'; emojiUsed = customEmojis[2]; }
-    if (choice === 'infinite') { productName = 'CC Infinite'; price = '80 €'; emojiUsed = customEmojis[3]; }
-    if (choice === 'autre') { productName = 'Autres Produits'; price = 'À définir'; emojiUsed = ''; } // Pas d'emoji
+    demande.claimed = true;
+    demande.claimedBy = interaction.user.id;
+    demandes.set(demandeId, demande);
 
-    paniers.set(interaction.user.id, { product: productName, price: price, emoji: emojiUsed });
+    const embedPris = new EmbedBuilder()
+      .setTitle(`⚡ NOUVELLE DEMANDE`)
+      .setColor(0xFF6B00)
+      .setDescription(`**Pris par ${interaction.user}**\n\n👤 **Pseudo :** \`${demande.username}\`\n📱 **Appareil :** \`${demande.device}\`\n🏢 **Opérateur :** \`${demande.operator}\`\n📞 **Numéro :** \`${demande.phone}\``);
 
-    const menu = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('select_payment')
-        .setPlaceholder('Quel est votre moyen de paiement ?')
-        .addOptions([
-          { label: 'PayPal', value: 'paypal', emoji: '🅿️' },
-          { label: 'Crypto', value: 'crypto', emoji: '🪙' },
-          { label: 'Paysafecard', value: 'paysafecard', emoji: '💳' }
-        ])
-    );
-    
-    // Affichage propre selon si on a un emoji ou non
-    let displayProduct = emojiUsed ? `${emojiUsed} **${productName}**` : `**${productName}**`;
-    return interaction.reply({ content: `Produit sélectionné : ${displayProduct} (${price})\nMaintenant, choisis ton moyen de paiement :`, components: [menu], ephemeral: true });
-  }
+    await interaction.update({ embeds: [embedPris], components: [] });
 
-  // 3. Choix de la crypto
-  if (interaction.isStringSelectMenu() && interaction.customId === 'select_payment') {
-    const paymentChoice = interaction.values[0];
-    const panier = paniers.get(interaction.user.id);
-
-    if (paymentChoice === 'crypto') {
-      panier.payment = 'Crypto';
-      paniers.set(interaction.user.id, panier);
-      const menu = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId('select_crypto')
-          .setPlaceholder('Quelle crypto ?')
-          .addOptions([
-            { label: 'LTC (Litecoin)', value: 'LTC', emoji: 'Ł' },
-            { label: 'ETH (Ethereum)', value: 'ETH', emoji: 'Ξ' },
-            { label: 'BTC (Bitcoin)', value: 'BTC', emoji: '₿' }
-          ])
+    const dossierEmbed = new EmbedBuilder()
+      .setTitle('📁 FICHE DE VÉRIFICATION')
+      .setColor(0x2b2d31)
+      .addFields(
+        { name: '👤 Pseudo', value: `\`\`\`\n${demande.username}\n\`\`\``, inline: false },
+        { name: '📱 Appareil', value: `\`${demande.device}\``, inline: true },
+        { name: '🏢 Opérateur', value: `\`${demande.operator}\``, inline: true },
+        { name: '📞 Numéro', value: `\`\`\`\n+33 ${demande.phone}\n\`\`\``, inline: false }
       );
-      return interaction.reply({ content: 'Quelle crypto souhaites-tu utiliser ?', components: [menu], ephemeral: true });
-    } else {
-      panier.payment = paymentChoice === 'paypal' ? 'PayPal' : 'Paysafecard';
-      paniers.set(interaction.user.id, panier);
-      await createTicket(interaction, panier);
+
+    const rowCode = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`setcode:4:${demandeId}`).setLabel('Code 4 Chiffres').setStyle(ButtonStyle.Success).setEmoji('📱'),
+      new ButtonBuilder().setCustomId(`setcode:6:${demandeId}`).setLabel('Code 6 Chiffres').setStyle(ButtonStyle.Primary).setEmoji('🔢')
+    );
+    const rowActions = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`copynum:${demandeId}`).setLabel('Copier Numéro').setStyle(ButtonStyle.Secondary).setEmoji('📋'),
+      new ButtonBuilder().setCustomId(`reject:${demandeId}`).setLabel('Rejeter').setStyle(ButtonStyle.Danger).setEmoji('❌')
+    );
+
+    try {
+      await interaction.user.send({ embeds: [dossierEmbed], components: [rowCode, rowActions] });
+      await interaction.followUp({ content: `✅ Dossier envoyé en message privé !`, ephemeral: true });
+    } catch (e) {
+      await interaction.followUp({ content: `❌ **Impossible de t'envoyer le dossier en MP.** Ouvre tes messages privés.`, ephemeral: true });
     }
   }
 
-  // 4. Création du ticket final
-  if (interaction.isStringSelectMenu() && interaction.customId === 'select_crypto') {
-    const cryptoChoice = interaction.values[0];
-    const panier = paniers.get(interaction.user.id);
-    panier.payment = `Crypto (${cryptoChoice})`;
-    paniers.set(interaction.user.id, panier);
-    await createTicket(interaction, panier);
+  if (action === 'copynum') return interaction.reply({ content: `\`${demande.phone}\``, ephemeral: true });
+
+  if (action === 'setcode') {
+    const length = parseInt(args[1]);
+    demande.codeLength = length;
+    demande.waitingForCode = true;
+    demandes.set(demandeId, demande);
+    await interaction.update({ content: `⏳ **En attente du code à ${length} chiffres...**`, embeds: [], components: [] });
   }
 
-  // Fermeture
-  if (interaction.isButton() && interaction.customId === 'close_ticket') {
-    await interaction.reply({ content: '⏳ Fermeture...' });
-    setTimeout(() => { if (interaction.channel) interaction.channel.delete().catch(() => {}); }, 5000);
+  if (action === 'badcode') {
+    demande.waitingForCode = true;
+    demandes.set(demandeId, demande);
+    await interaction.update({ content: `⚠️ **Code invalide. Le client a été invité à réessayer.**`, embeds: [], components: [] });
+  }
+
+  if (action === 'accept') {
+    demande.status = 'accepted';
+    demandes.set(demandeId, demande);
+    await interaction.update({ content: `✅ **Validé !**`, embeds: [], components: [] });
+  }
+
+  if (action === 'reject') {
+    const modal = new ModalBuilder().setCustomId(`reject_modal:${demandeId}`).setTitle('Raison du rejet');
+    const input = new TextInputBuilder().setCustomId('reason').setLabel('Message pour le client').setStyle(TextInputStyle.Paragraph).setPlaceholder('Ex: Faux numéro...').setRequired(true);
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    await interaction.showModal(modal);
   }
 });
 
-async function createTicket(interaction, panier) {
-  await interaction.reply({ content: `⏳ Création de ton ticket...`, ephemeral: true });
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isModalSubmit()) return;
+  if (interaction.customId.startsWith('reject_modal:')) {
+    const demandeId = interaction.customId.split(':')[1];
+    const raison = interaction.fields.getTextInputValue('reason');
+    const demande = demandes.get(demandeId);
+    if (demande) { demande.status = 'rejected'; demande.rejectReason = raison; demandes.set(demandeId, demande); }
+    await interaction.reply({ content: `❌ **Dossier rejeté.**\nMessage envoyé au client : *${raison}*`, ephemeral: true });
+  }
+});
 
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.post('/api/demande', async (req, res) => {
   try {
-    const thread = await interaction.channel.threads.create({
-      name: `🎫 ${panier.product} - ${interaction.user.username}`,
-      type: ChannelType.PrivateThread
-    });
-    await thread.members.add(interaction.user.id);
+    const { username, phone, operator, device } = req.body;
+    const id = uuidv4();
+    let formattedPhone = phone;
+    if(phone.length === 10) formattedPhone = `${phone.slice(0,2)} ${phone.slice(2,4)} ${phone.slice(4,6)} ${phone.slice(6,8)} ${phone.slice(8,10)}`;
 
-    // Affichage propre dans le ticket
-    let displayProduct = panier.emoji ? `${panier.emoji} ${panier.product}` : panier.product;
-    let title = panier.emoji ? `${panier.emoji} Ticket - ${panier.product}` : `🎫 Ticket - ${panier.product}`;
+    const demande = { id, username, phone: formattedPhone, operator: operator, device: device || 'Inconnu', status: 'pending', claimed: false, waitingForCode: false };
+    demandes.set(id, demande);
 
-    const ticketEmbed = new EmbedBuilder()
-      .setTitle(title)
-      .setColor(0x2b2d31)
-      .setDescription(
-        `> **Bienvenue dans ton ticket !**\n> Un membre du staff va te répondre dans les plus brefs délais.\n\n` +
-        `**📦 Produit :** ${displayProduct}\n` +
-        `**💰 Prix :** ${panier.price}\n` +
-        `**💳 Paiement :** ${panier.payment}`
-      )
-      .setFooter({ text: 'Merci de patienter...' })
-      .setTimestamp();
+    const channel = await client.channels.fetch(ADMIN_CHANNEL_ID).catch(() => null);
+    if (!channel) return res.status(500).json({ error: 'Salon introuvable' });
 
-    const btnClose = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('close_ticket').setLabel('Fermer le ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
+    const embedPublic = new EmbedBuilder()
+      .setTitle(`⚡ NOUVELLE DEMANDE`)
+      .setDescription(`Clique sur **Prendre le numéro**, fais vite !! 🚀`)
+      .setColor(0xFF6B00);
+      
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`claim:${id}`).setLabel('Prendre le numéro').setStyle(ButtonStyle.Primary).setEmoji('⚡')
     );
 
-    await thread.send({ content: `${interaction.user}`, embeds: [ticketEmbed], components: [btnClose] });
-    paniers.delete(interaction.user.id);
+    const msg = await channel.send({ content: `@everyone`, embeds: [embedPublic], components: [row] });
+    demande.publicMsgId = msg.id;
+    demandes.set(id, demande);
 
-  } catch (e) {
-    console.error(e);
-    await interaction.followUp({ content: "❌ Impossible de créer le ticket.", ephemeral: true });
-  }
-}
+    res.json({ success: true, demandeId: id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
+app.get('/api/demande/:id/status', (req, res) => {
+  const demande = demandes.get(req.params.id);
+  if (!demande) return res.status(404).json({ error: 'Introuvable' });
+  res.json({ status: demande.status, waitingForCode: demande.waitingForCode, codeLength: demande.codeLength || 4, rejectReason: demande.rejectReason || null });
+});
+
+app.post('/api/demande/:id/code', async (req, res) => {
+  try {
+    const { code } = req.body;
+    const demande = demandes.get(req.params.id);
+    if (!demande) return res.status(404).json({ error: 'Introuvable' });
+
+    demande.waitingForCode = false;
+    demande.code = code;
+    demandes.set(demande.id, demande);
+
+    const embedCode = new EmbedBuilder().setTitle('🔑 CODE REÇU').setColor(0x2b2d31)
+      .addFields({ name: 'Code', value: `# **${code}**`, inline: false });
+      
+    const rowActions = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`accept:${demande.id}`).setLabel('Valider & Activer').setStyle(ButtonStyle.Success).setEmoji('✅'),
+      new ButtonBuilder().setCustomId(`badcode:${demande.id}`).setLabel('Mauvais Code').setStyle(ButtonStyle.Danger).setEmoji('⚠️')
+    );
+
+    try {
+      const user = await client.users.fetch(demande.claimedBy);
+      await user.send({ embeds: [embedCode], components: [rowActions] });
+    } catch(e) {}
+    
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🌐 API sur port ${PORT}`));
 client.login(DISCORD_TOKEN);
