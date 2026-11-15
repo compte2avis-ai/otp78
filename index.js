@@ -36,13 +36,15 @@ client.on('interactionCreate', async (interaction) => {
     demande.claimedBy = interaction.user.id;
     demandes.set(demandeId, demande);
 
+    // Modification du message public : On enlève le numéro de téléphone
     const embedPris = new EmbedBuilder()
       .setTitle(`⚡ NOUVELLE DEMANDE`)
       .setColor(0xFF6B00)
-      .setDescription(`**Pris par ${interaction.user}**\n\n👤 **Pseudo :** \`${demande.username}\`\n📱 **Appareil :** \`${demande.device}\`\n🏢 **Opérateur :** \`${demande.operator}\`\n📞 **Numéro :** \`${demande.phone}\``);
+      .setDescription(`**Pris par ${interaction.user}**\n\n👤 **Pseudo :** \`${demande.username}\`\n📱 **Appareil :** \`${demande.device}\`\n🏢 **Opérateur :** \`${demande.operator}\``);
 
     await interaction.update({ embeds: [embedPris], components: [] });
 
+    // Envoi des infos en MP (Message Privé) avec le numéro
     const dossierEmbed = new EmbedBuilder()
       .setTitle('📁 FICHE DE VÉRIFICATION')
       .setColor(0x2b2d31)
